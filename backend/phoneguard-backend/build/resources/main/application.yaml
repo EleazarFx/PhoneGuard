@@ -3,5 +3,4 @@ ktor:
     port: 8080
   application:
     modules:
-      - mw.phoneguard.SerializationKt.configureSerialization
-      - mw.phoneguard.RoutingKt.configureRouting
+      - mw.phoneguard.ApplicationKt.module
