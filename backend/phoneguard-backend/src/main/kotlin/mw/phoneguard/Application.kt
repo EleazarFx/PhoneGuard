@@ -3,6 +3,7 @@ package mw.phoneguard
 import io.ktor.server.application.Application
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import mw.phoneguard.db.DatabaseFactory
 import mw.phoneguard.plugins.configureRouting
 import mw.phoneguard.plugins.configureSerialization
 
