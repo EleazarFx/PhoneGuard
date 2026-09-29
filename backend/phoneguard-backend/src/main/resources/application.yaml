@@ -4,3 +4,8 @@ ktor:
   application:
     modules:
       - mw.phoneguard.ApplicationKt.module
+
+database:
+  url: "jdbc:postgresql://localhost:5432/phoneguard"
+  user: "phoneguard_user"
+  password: "password"
