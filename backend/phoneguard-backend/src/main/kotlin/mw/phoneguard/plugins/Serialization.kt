@@ -1,4 +1,4 @@
-package mw.phoneguard
+package mw.phoneguard.plugins
 
 import io.ktor.server.application.*
 import io.ktor.serialization.kotlinx.json.*
