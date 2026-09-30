@@ -9,3 +9,8 @@ database:
   url: "jdbc:postgresql://localhost:5432/phoneguard"
   user: "phoneguard_user"
   password: "password"
+
+jwt:
+  secret: "change-me-to-a-long-random-string-at-least-32-characters"
+  issuer: "phoneguard"
+  audience: "phoneguard-clients"

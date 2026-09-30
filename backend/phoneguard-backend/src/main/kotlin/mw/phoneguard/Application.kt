@@ -5,7 +5,9 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import mw.phoneguard.db.DatabaseFactory
 import mw.phoneguard.plugins.configureRouting
+import mw.phoneguard.plugins.configureSecurity
 import mw.phoneguard.plugins.configureSerialization
+import mw.phoneguard.services.JwtService
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -15,5 +17,13 @@ fun main() {
 fun Application.module() {
     configureSerialization()
     DatabaseFactory.init(this)
-    configureRouting()
+
+    val config = environment.config
+    val jwtSecret = config.property("jwt.secret").getString()
+    val jwtIssuer = config.property("jwt.issuer").getString()
+    val jwtAudience = config.property("jwt.audience").getString()
+    val jwtService = JwtService(jwtSecret, jwtIssuer, jwtAudience)
+
+    configureSecurity(jwtService)
+    configureRouting(jwtService)
 }
