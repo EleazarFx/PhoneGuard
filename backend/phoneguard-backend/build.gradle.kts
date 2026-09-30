@@ -31,6 +31,9 @@ dependencies {
     implementation("org.postgresql:postgresql:42.7.4")
     implementation("com.zaxxer:HikariCP:5.1.0")
 
+    //JWT 
+    implementation(ktorLibs.server.auth.jwt) 
+
     testImplementation(kotlin("test"))
     testImplementation(ktorLibs.server.testHost)
 }
