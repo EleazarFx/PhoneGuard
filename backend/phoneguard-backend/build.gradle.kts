@@ -33,7 +33,14 @@ dependencies {
 
     //JWT 
     implementation(ktorLibs.server.auth.jwt) 
+    implementation("com.auth0:java-jwt:4.4.0")     // Underlying JWT library (used by Ktor auth-jwt and by JwtService.kt)
+
+    // BCrypt for password hashing (used by UserService.kt)
+    implementation("at.favre.lib:bcrypt:0.10.2")
 
     testImplementation(kotlin("test"))
     testImplementation(ktorLibs.server.testHost)
+
+   
+  
 }
