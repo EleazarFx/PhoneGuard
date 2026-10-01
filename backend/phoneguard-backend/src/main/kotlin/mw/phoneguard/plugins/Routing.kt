@@ -18,6 +18,8 @@ import mw.phoneguard.models.RegisterRequest
 import mw.phoneguard.services.JwtService
 import mw.phoneguard.services.UserService
 
+import mw.phoneguard.models.HealthResponse
+
 fun Application.configureRouting(jwtService: JwtService) {
     val userService = UserService()
 
@@ -27,7 +29,7 @@ fun Application.configureRouting(jwtService: JwtService) {
         }
 
         get("/health") {
-            call.respond(mapOf("status" to "ok", "time" to System.currentTimeMillis()))
+            call.respond(HealthResponse("ok", System.currentTimeMillis()))
         }
 
         post("/auth/register") {

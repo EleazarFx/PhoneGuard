@@ -31,3 +31,9 @@ data class LoginResponse(
 data class ErrorResponse(
     val error: String
 )
+
+@Serializable
+data class HealthResponse(
+    val status: String,
+    val time: Long
+)
