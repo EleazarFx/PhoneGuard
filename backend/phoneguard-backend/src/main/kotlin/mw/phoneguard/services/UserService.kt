@@ -1,5 +1,4 @@
 package mw.phoneguard.services
-
 import at.favre.lib.crypto.bcrypt.BCrypt
 import mw.phoneguard.db.Users
 import mw.phoneguard.models.LoginRequest
