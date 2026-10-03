@@ -26,3 +26,31 @@ object Devices : UUIDTable("devices") {
     val wipeAllowed = bool("wipe_allowed").default(false)
     val createdAt = datetime("created_at")
 }
+
+
+object Events : UUIDTable("events") {
+    val deviceId = reference("device_id", Devices, onDelete = ReferenceOption.CASCADE)
+    val clientSeq = long("client_seq").nullable()
+    val type = varchar("type", 50)
+    val timestamp = long("timestamp")                       // epoch millis from device
+    val lat = double("lat").nullable()
+    val lng = double("lng").nullable()
+    val accuracy = double("accuracy").nullable()
+    val battery = integer("battery").nullable()
+    val captureStatus = varchar("capture_status", 30).nullable()
+    val photoSha256 = varchar("photo_sha256", 64).nullable()
+    val threatLevel = varchar("threat_level", 20).nullable()
+    val createdAt = datetime("created_at")
+}
+
+object Commands : UUIDTable("commands") {
+    val deviceId = reference("device_id", Devices, onDelete = ReferenceOption.CASCADE)
+    val userId = reference("user_id", Users, onDelete = ReferenceOption.CASCADE)
+    val command = varchar("command", 50)
+    val payload = text("payload").nullable()
+    val createdAt = datetime("created_at")
+    val expiresAt = datetime("expires_at").nullable()
+    val deliveredAt = datetime("delivered_at").nullable()
+    val executedAt = datetime("executed_at").nullable()
+    val error = varchar("error", 500).nullable()
+}
