@@ -26,6 +26,7 @@ import mw.phoneguard.services.DeviceService
 
 fun Application.configureRouting(jwtService: JwtService) {
     val userService = UserService()
+    val deviceService = DeviceService()
 
     routing {
         get("/") {
