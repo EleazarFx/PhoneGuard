@@ -20,7 +20,7 @@ object DatabaseFactory {
         Database.connect(dataSource)
 
         transaction {
-            SchemaUtils.create(Users)
+            SchemaUtils.create(Users, Devices)
         }
     }
 
