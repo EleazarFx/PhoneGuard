@@ -21,7 +21,7 @@ object Devices : UUIDTable("devices") {
     val lastLat = double("last_lat").nullable()
     val lastLng = double("last_lng").nullable()
     val lastSeen = datetime("last_seen").nullable()
-    val lastBattery = int("last_battery").nullable()
+    val lastBattery = integer("last_battery").nullable()
     val alertModeActive = bool("alert_mode_active").default(false)
     val wipeAllowed = bool("wipe_allowed").default(false)
     val createdAt = datetime("created_at")
