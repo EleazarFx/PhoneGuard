@@ -20,6 +20,10 @@ import mw.phoneguard.services.UserService
 
 import mw.phoneguard.models.HealthResponse
 
+import mw.phoneguard.models.RegisterDeviceRequest
+import mw.phoneguard.models.RegisterDeviceResponse
+import mw.phoneguard.services.DeviceService
+
 fun Application.configureRouting(jwtService: JwtService) {
     val userService = UserService()
 
@@ -80,6 +84,39 @@ fun Application.configureRouting(jwtService: JwtService) {
                 val userId = principal.payload.getClaim("userId").asString()
                 call.respond(mapOf("userId" to userId))
             }
+
+            // Register a new device (owner must be authenticated)
+            post("/devices") {
+                val principal = call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("userId").asString()
+
+                val req = call.receive<RegisterDeviceRequest>()
+                val device = deviceService.registerForUser(userId, req)
+
+                if (device == null) {
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid device data"))
+                    return@post
+                }
+
+                val deviceToken = jwtService.generateDeviceToken(userId, device.id)
+                call.respond(
+                    HttpStatusCode.Created,
+                    RegisterDeviceResponse(
+                        deviceId = device.id,
+                        deviceToken = deviceToken,
+                        deviceName = device.deviceName
+                    )
+                )
+            }
+
+            // List all devices owned by the authenticated user
+            get("/devices") {
+                val principal = call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("userId").asString()
+                call.respond(deviceService.listForUser(userId))
+            }
+
+
         }
     }
 }
