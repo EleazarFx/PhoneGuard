@@ -24,6 +24,11 @@ import mw.phoneguard.models.RegisterDeviceRequest
 import mw.phoneguard.models.RegisterDeviceResponse
 import mw.phoneguard.services.DeviceService
 
+import mw.phoneguard.models.HeartbeatRequest
+import mw.phoneguard.models.HeartbeatResponse
+import mw.phoneguard.models.PostEventRequest
+
+
 fun Application.configureRouting(jwtService: JwtService) {
     val userService = UserService()
     val deviceService = DeviceService()
@@ -119,5 +124,53 @@ fun Application.configureRouting(jwtService: JwtService) {
 
 
         }
+
+
+        // Device-scoped routes (auth-device scheme)
+        authenticate("auth-device") {
+
+            // Post an event (the phone reporting a theft trigger)
+            post("/device/{deviceId}/events") {
+                val urlDeviceId = call.parameters["deviceId"]!!
+                val authed = call.requireMatchingDevice(urlDeviceId) ?: return@post
+
+                val req = call.receive<PostEventRequest>()
+                val event = deviceService.postEvent(authed.deviceId, req)
+
+                if (event == null) {
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid event data"))
+                    return@post
+                }
+
+                call.respond(HttpStatusCode.Created, event)
+            }
+
+            // Heartbeat (the phone saying "I'm alive")
+            post("/device/{deviceId}/heartbeat") {
+                val urlDeviceId = call.parameters["deviceId"]!!
+                val authed = call.requireMatchingDevice(urlDeviceId) ?: return@post
+
+                val req = call.receive<HeartbeatRequest>()
+                val ok = deviceService.recordHeartbeat(authed.deviceId, req)
+
+                if (!ok) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("Device not found"))
+                    return@post
+                }
+
+                call.respond(HeartbeatResponse(serverTime = System.currentTimeMillis(), acknowledged = true))
+            }
+
+            // Fetch pending commands (the phone polling for work to do)
+            get("/device/{deviceId}/commands") {
+                val urlDeviceId = call.parameters["deviceId"]!!
+                val authed = call.requireMatchingDevice(urlDeviceId) ?: return@get
+
+                val commands = deviceService.pendingCommands(authed.deviceId)
+                call.respond(commands)
+            }
+        }
+
+
     }
 }
