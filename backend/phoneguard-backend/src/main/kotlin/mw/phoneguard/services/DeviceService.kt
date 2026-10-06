@@ -25,8 +25,6 @@ import mw.phoneguard.models.DeviceCommand
 
 import mw.phoneguard.models.CommandSummary
 import org.jetbrains.exposed.sql.SortOrder
-import org.jetbrains.exposed.sql.isNull
-import org.jetbrains.exposed.sql.orderBy
 import org.jetbrains.exposed.sql.selectAll
 
 class DeviceService {
@@ -393,11 +391,12 @@ class DeviceService {
             }
 
             // Verify the command belongs to this device
-            val exists = Commands
+            val command = Commands
                 .selectAll()
                 .where { (Commands.id eq commandUuid) and (Commands.deviceId eq deviceUuid) }
-                .any()
-            if (!exists) return@transaction false
+                .firstOrNull()
+                ?: return@transaction false
+            val deliveredAt = command[Commands.deliveredAt]
 
             val now = LocalDateTime.now()
 
@@ -405,14 +404,14 @@ class DeviceService {
                 (Commands.id eq commandUuid) and (Commands.deviceId eq deviceUuid)
             }) {
                 when (status) {
-                    "delivered" -> it[deliveredAt] = now
+                    "delivered" -> it[Commands.deliveredAt] = now
                     "executed" -> {
-                        it[deliveredAt] = it[deliveredAt] ?: now
+                        it[Commands.deliveredAt] = deliveredAt ?: now
                         it[executedAt] = now
                     }
 
                     "failed" -> {
-                        it[deliveredAt] = it[deliveredAt] ?: now
+                        it[Commands.deliveredAt] = deliveredAt ?: now
                         it[Commands.error] = error ?: "unknown"
                     }
                 }
