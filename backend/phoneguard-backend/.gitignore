@@ -5,5 +5,11 @@ bin/
 *.iml
 local.properties
 .kotlin/
-
 test-lifecycle.sh
+
+.env
+.env.*
+*.log
+*.tmp
+*.pid
+.DS_Store
