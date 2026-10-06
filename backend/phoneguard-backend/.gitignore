@@ -5,3 +5,5 @@ bin/
 *.iml
 local.properties
 .kotlin/
+
+test-lifecycle.sh
