@@ -23,6 +23,12 @@ import org.jetbrains.exposed.sql.update
 import mw.phoneguard.db.Commands
 import mw.phoneguard.models.DeviceCommand
 
+import mw.phoneguard.models.CommandSummary
+import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.isNull
+import org.jetbrains.exposed.sql.orderBy
+import org.jetbrains.exposed.sql.selectAll
+
 class DeviceService {
 
     fun registerForUser(userId: String, req: RegisterDeviceRequest): DeviceSummary? {
@@ -205,6 +211,214 @@ class DeviceService {
                         expiresAt = row[Commands.expiresAt]?.toString()
                     )
                 }
+        }
+    }
+
+
+    fun listEventsForOwner(userId: String, deviceId: String, limit: Int = 50): List<EventSummary>? {
+        return transaction {
+            val ownerUuid = try {
+                UUID.fromString(userId)
+            } catch (e: Exception) {
+                return@transaction null
+            }
+            val deviceUuid = try {
+                UUID.fromString(deviceId)
+            } catch (e: Exception) {
+                return@transaction null
+            }
+
+            // Verify ownership first
+            val owns = Devices
+                .selectAll()
+                .where { (Devices.id eq deviceUuid) and (Devices.userId eq ownerUuid) }
+                .any()
+            if (!owns) return@transaction null
+
+            Events
+                .selectAll()
+                .where { Events.deviceId eq deviceUuid }
+                .orderBy(Events.timestamp to SortOrder.DESC)
+                .limit(limit)
+                .map { row ->
+                    EventSummary(
+                        id = row[Events.id].value.toString(),
+                        type = row[Events.type],
+                        timestamp = row[Events.timestamp],
+                        receivedAt = row[Events.createdAt].toString(),
+                        lat = row[Events.lat],
+                        lng = row[Events.lng],
+                        accuracy = row[Events.accuracy],
+                        battery = row[Events.battery],
+                        captureStatus = row[Events.captureStatus],
+                        photoSha256 = row[Events.photoSha256],
+                        threatLevel = row[Events.threatLevel]
+                    )
+                }
+        }
+    }
+
+// ---------- Commands ----------
+
+    fun createCommand(
+        userId: String,
+        deviceId: String,
+        command: String,
+        payload: String?,
+        expiresInSeconds: Long?
+    ): CommandSummary? {
+        val validCommands = setOf(
+            "LOCK", "ALARM", "MESSAGE", "LOCATE",
+            "LIVE_TRACK", "ALERT_MODE", "LOST_MODE", "WIPE"
+        )
+        if (command !in validCommands) return null
+
+        return transaction {
+            val ownerUuid = try {
+                UUID.fromString(userId)
+            } catch (e: Exception) {
+                return@transaction null
+            }
+            val deviceUuid = try {
+                UUID.fromString(deviceId)
+            } catch (e: Exception) {
+                return@transaction null
+            }
+
+            // Owner must own the device
+            val owns = Devices
+                .selectAll()
+                .where { (Devices.id eq deviceUuid) and (Devices.userId eq ownerUuid) }
+                .any()
+            if (!owns) return@transaction null
+
+            val newId = UUID.randomUUID()
+            val now = LocalDateTime.now()
+            val expiresAt = now.plusSeconds(expiresInSeconds ?: (24L * 3600L))
+
+            Commands.insert {
+                it[id] = newId
+                it[Commands.deviceId] = EntityID(deviceUuid, Devices)
+                it[Commands.userId] = EntityID(ownerUuid, Users)
+                it[Commands.command] = command
+                it[Commands.payload] = payload
+                it[createdAt] = now
+                it[this.expiresAt] = expiresAt
+            }
+
+            CommandSummary(
+                id = newId.toString(),
+                command = command,
+                payload = payload,
+                createdAt = now.toString(),
+                expiresAt = expiresAt.toString(),
+                deliveredAt = null,
+                executedAt = null,
+                error = null,
+                status = "queued"
+            )
+        }
+    }
+
+    fun listCommandsForOwner(userId: String, deviceId: String, limit: Int = 50): List<CommandSummary>? {
+        return transaction {
+            val ownerUuid = try {
+                UUID.fromString(userId)
+            } catch (e: Exception) {
+                return@transaction null
+            }
+            val deviceUuid = try {
+                UUID.fromString(deviceId)
+            } catch (e: Exception) {
+                return@transaction null
+            }
+
+            val owns = Devices
+                .selectAll()
+                .where { (Devices.id eq deviceUuid) and (Devices.userId eq ownerUuid) }
+                .any()
+            if (!owns) return@transaction null
+
+            Commands
+                .selectAll()
+                .where { Commands.deviceId eq deviceUuid }
+                .orderBy(Commands.createdAt to SortOrder.DESC)
+                .limit(limit)
+                .map { row ->
+                    val delivered = row[Commands.deliveredAt]
+                    val executed = row[Commands.executedAt]
+                    val error = row[Commands.error]
+                    val expiresAt = row[Commands.expiresAt]
+                    val now = LocalDateTime.now()
+
+                    val status = when {
+                        error != null -> "failed"
+                        executed != null -> "executed"
+                        delivered != null -> "delivered"
+                        expiresAt != null && expiresAt.isBefore(now) -> "expired"
+                        else -> "queued"
+                    }
+
+                    CommandSummary(
+                        id = row[Commands.id].value.toString(),
+                        command = row[Commands.command],
+                        payload = row[Commands.payload],
+                        createdAt = row[Commands.createdAt].toString(),
+                        expiresAt = expiresAt?.toString(),
+                        deliveredAt = delivered?.toString(),
+                        executedAt = executed?.toString(),
+                        error = error,
+                        status = status
+                    )
+                }
+        }
+    }
+
+    fun updateCommandStatus(
+        deviceId: String,
+        commandId: String,
+        status: String,
+        error: String?
+    ): Boolean {
+        return transaction {
+            val deviceUuid = try {
+                UUID.fromString(deviceId)
+            } catch (e: Exception) {
+                return@transaction false
+            }
+            val commandUuid = try {
+                UUID.fromString(commandId)
+            } catch (e: Exception) {
+                return@transaction false
+            }
+
+            // Verify the command belongs to this device
+            val exists = Commands
+                .selectAll()
+                .where { (Commands.id eq commandUuid) and (Commands.deviceId eq deviceUuid) }
+                .any()
+            if (!exists) return@transaction false
+
+            val now = LocalDateTime.now()
+
+            val updated = Commands.update({
+                (Commands.id eq commandUuid) and (Commands.deviceId eq deviceUuid)
+            }) {
+                when (status) {
+                    "delivered" -> it[deliveredAt] = now
+                    "executed" -> {
+                        it[deliveredAt] = it[deliveredAt] ?: now
+                        it[executedAt] = now
+                    }
+
+                    "failed" -> {
+                        it[deliveredAt] = it[deliveredAt] ?: now
+                        it[Commands.error] = error ?: "unknown"
+                    }
+                }
+            }
+
+            updated > 0
         }
     }
 
