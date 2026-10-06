@@ -28,6 +28,9 @@ import mw.phoneguard.models.HeartbeatRequest
 import mw.phoneguard.models.HeartbeatResponse
 import mw.phoneguard.models.PostEventRequest
 
+import mw.phoneguard.models.CommandStatusRequest
+import mw.phoneguard.models.CreateCommandRequest
+
 
 fun Application.configureRouting(jwtService: JwtService) {
     val userService = UserService()
@@ -123,6 +126,62 @@ fun Application.configureRouting(jwtService: JwtService) {
             }
 
 
+            // Queue a command for a device
+            post("/devices/{deviceId}/commands") {
+                val principal = call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("userId").asString()
+                val deviceId = call.parameters["deviceId"]!!
+
+                val req = call.receive<CreateCommandRequest>()
+                val result = deviceService.createCommand(
+                    userId = userId,
+                    deviceId = deviceId,
+                    command = req.command,
+                    payload = req.payload,
+                    expiresInSeconds = req.expiresInSeconds
+                )
+
+                if (result == null) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorResponse("Invalid command, or device not found, or not owned by you")
+                    )
+                    return@post
+                }
+
+                call.respond(HttpStatusCode.Created, result)
+            }
+
+            // Read command history for a device
+            get("/devices/{deviceId}/commands") {
+                val principal = call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("userId").asString()
+                val deviceId = call.parameters["deviceId"]!!
+
+                val commands = deviceService.listCommandsForOwner(userId, deviceId)
+                if (commands == null) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("Device not found or not owned by you"))
+                    return@get
+                }
+                call.respond(commands)
+            }
+
+            // Read the event feed for a device
+            get("/devices/{deviceId}/events") {
+                val principal = call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("userId").asString()
+                val deviceId = call.parameters["deviceId"]!!
+
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
+                val events = deviceService.listEventsForOwner(userId, deviceId, limit)
+                if (events == null) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("Device not found or not owned by you"))
+                    return@get
+                }
+                call.respond(events)
+            }
+
+
         }
 
 
@@ -169,6 +228,37 @@ fun Application.configureRouting(jwtService: JwtService) {
                 val commands = deviceService.pendingCommands(authed.deviceId)
                 call.respond(commands)
             }
+
+
+            // Report status of a command the device fetched
+            post("/device/{deviceId}/commands/{commandId}/status") {
+                val urlDeviceId = call.parameters["deviceId"]!!
+                val authed = call.requireMatchingDevice(urlDeviceId) ?: return@post
+                val commandId = call.parameters["commandId"]!!
+
+                val req = call.receive<CommandStatusRequest>()
+
+                if (req.status !in setOf("delivered", "executed", "failed")) {
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid status"))
+                    return@post
+                }
+
+                val ok = deviceService.updateCommandStatus(
+                    deviceId = authed.deviceId,
+                    commandId = commandId,
+                    status = req.status,
+                    error = req.error
+                )
+
+                if (!ok) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("Command not found for this device"))
+                    return@post
+                }
+
+                call.respond(HttpStatusCode.OK, mapOf("acknowledged" to true))
+            }
+
+
         }
 
 
