@@ -22,6 +22,7 @@ import org.jetbrains.exposed.sql.update
 
 import mw.phoneguard.db.Commands
 import mw.phoneguard.models.DeviceCommand
+
 class DeviceService {
 
     fun registerForUser(userId: String, req: RegisterDeviceRequest): DeviceSummary? {
@@ -104,8 +105,6 @@ class DeviceService {
     }
 
 
-
-
     fun postEvent(deviceId: String, req: PostEventRequest): EventSummary? {
         return transaction {
             val deviceUuid = try {
@@ -140,13 +139,15 @@ class DeviceService {
             EventSummary(
                 id = newId.toString(),
                 type = req.type,
-                timestamp = req.timestamp.toString(),
+                timestamp = req.timestamp,
+                receivedAt = now.toString(),
                 lat = req.lat,
                 lng = req.lng,
+                accuracy = req.accuracy,
                 battery = req.battery,
                 captureStatus = req.captureStatus,
-                threatLevel = threatLevel,
-                createdAt = now.toString()
+                photoSha256 = req.photoSha256,
+                threatLevel = threatLevel
             )
         }
     }
@@ -182,28 +183,30 @@ class DeviceService {
         }
     }
 
-    
-    
-    fun pendingCommands(deviceId: String): List<DeviceCommand> {
-    return transaction {
-        val deviceUuid = try { UUID.fromString(deviceId) } catch (e: Exception) { return@transaction emptyList() }
 
-        Commands
-            .selectAll()
-            .where { (Commands.deviceId eq deviceUuid) and (Commands.deliveredAt eq null) }
-            .orderBy(Commands.createdAt)
-            .map { row ->
-                DeviceCommand(
-                    id = row[Commands.id].value.toString(),
-                    command = row[Commands.command],
-                    payload = row[Commands.payload],
-                    createdAt = row[Commands.createdAt].toString(),
-                    expiresAt = row[Commands.expiresAt]?.toString()
-                )
+    fun pendingCommands(deviceId: String): List<DeviceCommand> {
+        return transaction {
+            val deviceUuid = try {
+                UUID.fromString(deviceId)
+            } catch (e: Exception) {
+                return@transaction emptyList()
             }
+
+            Commands
+                .selectAll()
+                .where { (Commands.deviceId eq deviceUuid) and (Commands.deliveredAt eq null) }
+                .orderBy(Commands.createdAt)
+                .map { row ->
+                    DeviceCommand(
+                        id = row[Commands.id].value.toString(),
+                        command = row[Commands.command],
+                        payload = row[Commands.payload],
+                        createdAt = row[Commands.createdAt].toString(),
+                        expiresAt = row[Commands.expiresAt]?.toString()
+                    )
+                }
+        }
     }
-}
-    
 
 
 }
