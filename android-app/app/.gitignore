@@ -1,0 +1,14 @@
+build/
+bin/
+.gradle/
+.idea/
+*.iml
+local.properties
+.kotlin/
+
+.env
+.env.*
+*.log
+*.tmp
+*.pid
+.DS_Store
