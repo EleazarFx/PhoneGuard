@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "mw.phoneguard.app"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "mw.phoneguard.app"
