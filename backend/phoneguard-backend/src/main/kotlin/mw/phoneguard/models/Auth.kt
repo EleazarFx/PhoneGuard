@@ -37,3 +37,9 @@ data class HealthResponse(
     val status: String,
     val time: Long
 )
+
+@Serializable
+data class ForgotPasswordRequest(val email: String)
+
+@Serializable
+data class ResetPasswordRequest(val email: String, val otp: String, val newPassword: String)

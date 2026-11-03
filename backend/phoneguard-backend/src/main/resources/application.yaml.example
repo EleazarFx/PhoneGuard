@@ -1,0 +1,24 @@
+ktor:
+  application:
+    modules:
+      - mw.phoneguard.ApplicationKt.module
+  deployment:
+    port: 8080
+    host: 0.0.0.0
+
+database:
+  url: "jdbc:postgresql://localhost:5432/phoneguard"
+  user: "phoneguard_user"
+  password: "CHANGE_ME"
+
+jwt:
+  secret: "CHANGE_ME_LONG_RANDOM_STRING"
+  issuer: "phoneguard"
+  audience: "phoneguard-clients"
+
+smtp:
+  host: "smtp.gmail.com"
+  port: 587
+  user: "your.email@gmail.com"
+  password: "CHANGE_ME_APP_PASSWORD"
+  fromName: "PhoneGuard Security"

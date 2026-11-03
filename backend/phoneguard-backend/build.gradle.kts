@@ -1,4 +1,3 @@
-
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(ktorLibs.plugins.ktor)
@@ -37,6 +36,9 @@ dependencies {
 
     // BCrypt for password hashing (used by UserService.kt)
     implementation("at.favre.lib:bcrypt:0.10.2")
+
+    // Email (SMTP)
+    implementation("com.sun.mail:jakarta.mail:2.0.1")
 
     testImplementation(kotlin("test"))
     testImplementation(ktorLibs.server.testHost)

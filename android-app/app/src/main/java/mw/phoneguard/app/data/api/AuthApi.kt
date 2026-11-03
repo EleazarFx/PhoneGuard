@@ -9,6 +9,8 @@ import mw.phoneguard.app.data.models.LoginRequest
 import mw.phoneguard.app.data.models.LoginResponse
 import mw.phoneguard.app.data.models.RegisterRequest
 import mw.phoneguard.app.data.models.RegisterResponse
+import mw.phoneguard.app.data.models.ForgotPasswordRequest
+import mw.phoneguard.app.data.models.ResetPasswordRequest
 
 /**
  * Result type used by every API function.
@@ -67,4 +69,38 @@ class AuthApi {
             ApiResult.Failure(e.message ?: "Network error")
         }
     }
+
+
+    suspend fun requestPasswordReset(email: String): ApiResult<Unit> {
+        return try {
+            val response: HttpResponse = client.post("${ApiClient.BASE_URL}/auth/forgot-password") {
+                setBody(ForgotPasswordRequest(email = email))
+            }
+            if (response.status == HttpStatusCode.OK) {
+                ApiResult.Success(Unit)
+            } else {
+                ApiResult.Failure("Could not request reset")
+            }
+        } catch (e: Exception) {
+            ApiResult.Failure(e.message ?: "Network error")
+        }
+    }
+
+    suspend fun resetPassword(email: String, otp: String, newPassword: String): ApiResult<Unit> {
+        return try {
+            val response: HttpResponse = client.post("${ApiClient.BASE_URL}/auth/reset-password") {
+                setBody(ResetPasswordRequest(email = email, otp = otp, newPassword = newPassword))
+            }
+            if (response.status == HttpStatusCode.OK) {
+                ApiResult.Success(Unit)
+            } else {
+                val error = response.body<Map<String, String>>()
+                ApiResult.Failure(error["error"] ?: "Reset failed")
+            }
+        } catch (e: Exception) {
+            ApiResult.Failure(e.message ?: "Network error")
+        }
+    }
+
+
 }

@@ -30,11 +30,16 @@ import mw.phoneguard.models.PostEventRequest
 
 import mw.phoneguard.models.CommandStatusRequest
 import mw.phoneguard.models.CreateCommandRequest
+import mw.phoneguard.models.ForgotPasswordRequest
+import mw.phoneguard.models.ResetPasswordRequest
+import mw.phoneguard.services.PasswordResetService
+import mw.phoneguard.services.EmailService  
 
-
-fun Application.configureRouting(jwtService: JwtService) {
+fun Application.configureRouting(jwtService: JwtService, emailService: EmailService) {
     val userService = UserService()
     val deviceService = DeviceService()
+    val resetService = PasswordResetService(emailService)
+    
 
     routing {
         get("/") {
@@ -80,7 +85,34 @@ fun Application.configureRouting(jwtService: JwtService) {
                     expiresIn = JwtService.ACCESS_TOKEN_LIFETIME_MS / 1000
                 )
             )
+               
         }
+        
+        post("/auth/forgot-password") {
+            val req = call.receive<ForgotPasswordRequest>()
+            resetService.requestReset(req.email)
+            call.respond(HttpStatusCode.OK, mapOf("message" to "If this email exists, you'll receive a code."))
+        }
+
+        post("/auth/reset-password") {
+            val req = call.receive<ResetPasswordRequest>()
+            if (req.newPassword.length < 8) {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("Password must be at least 8 characters"))
+                return@post
+            }
+            val success = resetService.resetPassword(req.email, req.otp, req.newPassword)
+            if (success) {
+                call.respond(HttpStatusCode.OK, mapOf("message" to "Password reset successful."))
+            } else {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid or expired code."))
+            }
+        }
+        
+
+
+
+
+        
 
         authenticate("auth-jwt") {
             get("/auth/me") {

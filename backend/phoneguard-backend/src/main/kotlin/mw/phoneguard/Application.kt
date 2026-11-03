@@ -7,6 +7,7 @@ import mw.phoneguard.db.DatabaseFactory
 import mw.phoneguard.plugins.configureRouting
 import mw.phoneguard.plugins.configureSecurity
 import mw.phoneguard.plugins.configureSerialization
+import mw.phoneguard.services.EmailService          
 import mw.phoneguard.services.JwtService
 
 fun main() {
@@ -19,11 +20,14 @@ fun Application.module() {
     DatabaseFactory.init(this)
 
     val config = environment.config
-    val jwtSecret = config.property("jwt.secret").getString()
-    val jwtIssuer = config.property("jwt.issuer").getString()
-    val jwtAudience = config.property("jwt.audience").getString()
-    val jwtService = JwtService(jwtSecret, jwtIssuer, jwtAudience)
+    val jwtService = JwtService(
+        config.property("jwt.secret").getString(),
+        config.property("jwt.issuer").getString(),
+        config.property("jwt.audience").getString()
+    )
+
+    val emailService = EmailService(config)
 
     configureSecurity(jwtService)
-    configureRouting(jwtService)
+    configureRouting(jwtService, emailService)
 }

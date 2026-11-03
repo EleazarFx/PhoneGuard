@@ -54,3 +54,10 @@ object Commands : UUIDTable("commands") {
     val executedAt = datetime("executed_at").nullable()
     val error = varchar("error", 500).nullable()
 }
+
+object PasswordResetTokens : UUIDTable("password_reset_tokens") {
+    val userId = reference("user_id", Users, onDelete = ReferenceOption.CASCADE)
+    val otpCode = varchar("otp_code", 6)
+    val expiresAt = datetime("expires_at")
+    val used = bool("used").default(false)
+}

@@ -21,7 +21,7 @@ import kotlinx.serialization.json.Json
  */
 object ApiClient {
 
-    const val BASE_URL = "http://localhost:8080"
+    const val BASE_URL = "http://192.168.1.189:8080"
 
     val http: HttpClient by lazy {
         HttpClient(OkHttp) {

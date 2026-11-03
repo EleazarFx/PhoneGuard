@@ -5,13 +5,6 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-/**
- * Secure storage for authentication tokens and device identity.
- *
- * Uses EncryptedSharedPreferences, which encrypts both keys and values
- * using a key stored in the Android Keystore. If someone extracts the
- * app's data directory, the tokens cannot be read.
- */
 class TokenStore(context: Context) {
 
     private val prefs: SharedPreferences by lazy {
@@ -35,6 +28,11 @@ class TokenStore(context: Context) {
             .apply()
     }
 
+    fun saveUserEmail(email: String) {
+        prefs.edit().putString(KEY_USER_EMAIL, email).apply()
+    }
+
+    fun getUserEmail(): String? = prefs.getString(KEY_USER_EMAIL, null)
     fun getUserAccessToken(): String? = prefs.getString(KEY_ACCESS_TOKEN, null)
     fun getUserRefreshToken(): String? = prefs.getString(KEY_REFRESH_TOKEN, null)
 
@@ -48,10 +46,14 @@ class TokenStore(context: Context) {
     fun getDeviceId(): String? = prefs.getString(KEY_DEVICE_ID, null)
     fun getDeviceToken(): String? = prefs.getString(KEY_DEVICE_TOKEN, null)
 
+    fun hasDeviceRegistered(): Boolean = getDeviceId() != null && getDeviceToken() != null
+    fun hasUserSession(): Boolean = getUserAccessToken() != null
+
     fun clearUserSession() {
         prefs.edit()
             .remove(KEY_ACCESS_TOKEN)
             .remove(KEY_REFRESH_TOKEN)
+            .remove(KEY_USER_EMAIL)
             .apply()
     }
 
@@ -59,11 +61,10 @@ class TokenStore(context: Context) {
         prefs.edit().clear().apply()
     }
 
-    fun hasUserSession(): Boolean = getUserAccessToken() != null
-
     companion object {
         private const val KEY_ACCESS_TOKEN = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
+        private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_TOKEN = "device_token"
     }

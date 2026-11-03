@@ -3,112 +3,87 @@ package mw.phoneguard.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
-import mw.phoneguard.app.data.api.ApiResult
-import mw.phoneguard.app.data.api.AuthApi
-import mw.phoneguard.app.data.storage.TokenStore
+
+import mw.phoneguard.app.ui.auth.AuthViewModel
+import mw.phoneguard.app.ui.auth.LoginScreen
+import mw.phoneguard.app.ui.auth.RegisterScreen
+import mw.phoneguard.app.ui.home.HomeScreen
 import mw.phoneguard.app.ui.theme.PhoneGuardTheme
 
+import mw.phoneguard.app.ui.auth.ForgotPasswordScreen
+import mw.phoneguard.app.ui.auth.ResetPasswordScreen
+import mw.phoneguard.app.ui.auth.ResetStep
+
 class MainActivity : ComponentActivity() {
+
+    private val authViewModel: AuthViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
             PhoneGuardTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    TestLoginScreen()
-                }
+                PhoneGuardApp(authViewModel)
             }
         }
     }
 }
-
 @Composable
-fun TestLoginScreen() {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val authApi = remember { AuthApi() }
-    val tokenStore = remember { TokenStore(context.applicationContext) }
+fun PhoneGuardApp(authViewModel: AuthViewModel) {
+    val state by authViewModel.uiState.collectAsState()
 
-    var status by remember { mutableStateOf("Tap a button to test") }
+    var showRegister by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("PhoneGuard Test", style = MaterialTheme.typography.headlineSmall)
-        Text(status)
+    when {
+        // 1. Logged in → Home
+        state.isLoggedIn -> HomeScreen(
+            userEmail = state.userEmail,
+            deviceRegistered = state.isDeviceRegistered,
+            onLogout = { authViewModel.logout() }
+        )
 
-        Button(onClick = {
-            scope.launch {
-                status = "Registering..."
-                val result = authApi.register("testuser@example.com", "hunter2hunter2")
-                status = when (result) {
-                    is ApiResult.Success -> "Registered: ${result.value.email}"
-                    is ApiResult.Failure -> "Error: ${result.message}"
-                }
-            }
-        }) {
-            Text("Register test user")
-        }
+        // 2. Reset flow: request code
+        state.resetStep == ResetStep.RequestOtp -> ForgotPasswordScreen(
+            state = state,
+            onEmailChange = authViewModel::onEmailChange,
+            onSubmit = authViewModel::submitForgotPasswordRequest,
+            onCancel = authViewModel::cancelReset
+        )
 
-        Button(onClick = {
-            scope.launch {
-                status = "Logging in..."
-                val result = authApi.login("testuser@example.com", "hunter2hunter2")
-                status = when (result) {
-                    is ApiResult.Success -> {
-                        tokenStore.saveUserTokens(result.value.accessToken, result.value.refreshToken)
-                        "Logged in! Token saved."
-                    }
-                    is ApiResult.Failure -> "Error: ${result.message}"
-                }
-            }
-        }) {
-            Text("Login test user")
-        }
+        // 3. Reset flow: enter code + new password
+        state.resetStep == ResetStep.EnterOtp -> ResetPasswordScreen(
+            state = state,
+            onOtpChange = authViewModel::onOtpChange,
+            onPasswordChange = authViewModel::onPasswordChange,
+            onSubmit = authViewModel::submitNewPassword,
+            onCancel = authViewModel::cancelReset
+        )
 
-        Button(onClick = {
-            val token = tokenStore.getUserAccessToken()
-            status = if (token != null) {
-                "Stored token: ${token.take(30)}..."
-            } else {
-                "No token stored"
-            }
-        }) {
-            Text("Show stored token")
-        }
-    }
-}
+        // 4. Register screen
+        showRegister -> RegisterScreen(
+            state = state,
+            onEmailChange = authViewModel::onEmailChange,
+            onPasswordChange = authViewModel::onPasswordChange,
+            onRegisterClick = authViewModel::registerAndLogin,
+            onGoToLogin = { showRegister = false }
+        )
 
-@Composable
-@Preview
-fun TestLoginScreenPreview() {
-    PhoneGuardTheme {
-        TestLoginScreen()
+        // 5. Login screen (default)
+        else -> LoginScreen(
+            state = state,
+            onEmailChange = authViewModel::onEmailChange,
+            onPasswordChange = authViewModel::onPasswordChange,
+            onLoginClick = authViewModel::login,
+            onRegisterClick = { },
+            onGoToRegister = { showRegister = true },
+            onForgotPasswordClick = authViewModel::startForgotPassword
+        )
     }
 }

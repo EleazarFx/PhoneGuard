@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <color name="guard_teal">#FF4FD1C5</color>
+    <color name="background_black">#FF090A0D</color>
+    <color name="panel_dark">#FF181C24</color>
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
