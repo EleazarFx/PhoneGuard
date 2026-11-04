@@ -1,65 +1,305 @@
 package mw.phoneguard.app.ui.home
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DividerDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import mw.phoneguard.app.ui.theme.GuardTeal
+import mw.phoneguard.app.ui.theme.LineColor
+import mw.phoneguard.app.ui.theme.PanelDark
+import mw.phoneguard.app.ui.theme.TextFaint
+import mw.phoneguard.app.ui.theme.TextMuted
+import mw.phoneguard.app.ui.theme.TextPrimary
 
 @Composable
 fun HomeScreen(
     userEmail: String?,
     deviceRegistered: Boolean,
+    alertModeArmed: Boolean,
+    lastCheckIn: String,
+    trustedContactsCount: Int,
+    unsyncedEventCount: Int,
+    onToggleAlertMode: (Boolean) -> Unit,
+    onEnableAdminClick: () -> Unit,
     onLogout: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        Text(
-            text = "Protected",
-            fontSize = 30.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary
-        )
+        // ---- Top content ----
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(Modifier.height(16.dp))
 
-        Spacer(Modifier.height(8.dp))
+            // Guardian status ring
+            Box(
+                modifier = Modifier
+                    .size(88.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                GuardTeal.copy(alpha = 0.12f),
+                                GuardTeal.copy(alpha = 0.02f)
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(GuardTeal.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(GuardTeal)
+                        )
+                    }
+                }
+            }
 
-        Text(
-            text = userEmail ?: "No account",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+            Spacer(Modifier.height(16.dp))
 
-        Spacer(Modifier.height(24.dp))
+            Text(
+                text = "GUARDIAN MODE",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = TextFaint
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Protected",
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Last check-in $lastCheckIn",
+                fontSize = 13.sp,
+                color = TextMuted
+            )
 
-        Text(
-            text = if (deviceRegistered) {
-                "This phone is registered as a device."
-            } else {
-                "Device not yet registered. Retry from settings later."
-            },
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+            Spacer(Modifier.height(28.dp))
 
-        Spacer(Modifier.height(24.dp))
+            // Stats card
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(PanelDark)
+                    .padding(20.dp)
+            ) {
+                // Alert Mode row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            "Alert Mode",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            if (alertModeArmed) "Motion alarm is armed" else "Off",
+                            fontSize = 12.sp,
+                            color = TextMuted
+                        )
+                    }
+                    Switch(
+                        checked = alertModeArmed,
+                        onCheckedChange = onToggleAlertMode,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = GuardTeal,
+                            checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = PanelDark
+                        )
+                    )
+                }
 
-        Button(onClick = onLogout) {
-            Text("Log out")
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
+                Spacer(Modifier.height(14.dp))
+
+                // Trusted contacts row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Trusted contacts", fontSize = 14.sp, color = TextMuted)
+                    Text(
+                        if (trustedContactsCount == 0) "None registered"
+                        else "$trustedContactsCount registered",
+                        fontSize = 14.sp,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Pending events row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Pending sync", fontSize = 14.sp, color = TextMuted)
+                    Text(
+                        if (unsyncedEventCount == 0) "All synced"
+                        else "$unsyncedEventCount event${if (unsyncedEventCount == 1) "" else "s"}",
+                        fontSize = 14.sp,
+                        color = if (unsyncedEventCount > 0) GuardTeal else TextPrimary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Device status row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Device", fontSize = 14.sp, color = TextMuted)
+                    Text(
+                        if (deviceRegistered) "Registered" else "Not registered",
+                        fontSize = 14.sp,
+                        color = if (deviceRegistered) GuardTeal else TextPrimary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Device admin row (shows once user can enable it)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Device admin", fontSize = 14.sp, color = TextMuted)
+                        Text(
+                            "Required for wrong-PIN detection",
+                            fontSize = 11.sp,
+                            color = TextFaint
+                        )
+                    }
+                    androidx.compose.material3.TextButton(onClick = onEnableAdminClick) {
+                        Text(
+                            "Set up",
+                            fontSize = 13.sp,
+                            color = GuardTeal,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            // Account footer
+            Text(
+                text = userEmail ?: "Not signed in",
+                fontSize = 12.sp,
+                color = TextFaint
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Tap to log out",
+                fontSize = 11.sp,
+                color = TextFaint,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .clickableNoRipple { onLogout() }
+            )
+        }
+
+        // ---- Bottom nav ----
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(PanelDark)
+                .padding(vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            BottomNavItem("Status", true)
+            BottomNavItem("Activity", false)
+            BottomNavItem("Contacts", false)
+            BottomNavItem("Settings", false)
         }
     }
 }
+
+@Composable
+private fun BottomNavItem(label: String, active: Boolean) {
+    Text(
+        text = label,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = if (active) TextPrimary else TextFaint
+    )
+}
+
+// Helper: Modifier.clickable without the ripple effect (cleaner for footers)
+@Composable
+private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
+    this.clickable(
+        interactionSource = remember { MutableInteractionSource() },
+        indication = null,
+        onClick = onClick
+    )
+
