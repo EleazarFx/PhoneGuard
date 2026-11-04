@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DividerDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -49,7 +51,9 @@ fun HomeScreen(
     unsyncedEventCount: Int,
     onToggleAlertMode: (Boolean) -> Unit,
     onEnableAdminClick: () -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    onNavigate: (mw.phoneguard.app.AppScreen) -> Unit,
+    currentScreen: mw.phoneguard.app.AppScreen
 ) {
     Column(
         modifier = Modifier
@@ -61,6 +65,7 @@ fun HomeScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -248,7 +253,7 @@ fun HomeScreen(
 
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(24.dp))
 
             // Account footer
             Text(
@@ -257,15 +262,14 @@ fun HomeScreen(
                 color = TextFaint
             )
             Spacer(Modifier.height(8.dp))
-            Text(
-                text = "Tap to log out",
-                fontSize = 11.sp,
-                color = TextFaint,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .clickableNoRipple { onLogout() }
-            )
+            androidx.compose.material3.TextButton(
+                onClick = onLogout,
+                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                    contentColor = TextMuted
+                )
+            ) {
+                Text("Log out", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
         }
 
         // ---- Bottom nav ----
@@ -273,13 +277,13 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(PanelDark)
-                .padding(vertical = 12.dp),
+                .padding(vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            BottomNavItem("Status", true)
-            BottomNavItem("Activity", false)
-            BottomNavItem("Contacts", false)
-            BottomNavItem("Settings", false)
+            mw.phoneguard.app.ui.activity.BottomNavItem("Status", currentScreen == mw.phoneguard.app.AppScreen.Home) { onNavigate(mw.phoneguard.app.AppScreen.Home) }
+            mw.phoneguard.app.ui.activity.BottomNavItem("Activity", currentScreen == mw.phoneguard.app.AppScreen.Activity) { onNavigate(mw.phoneguard.app.AppScreen.Activity) }
+            mw.phoneguard.app.ui.activity.BottomNavItem("Contacts", currentScreen == mw.phoneguard.app.AppScreen.Contacts) { onNavigate(mw.phoneguard.app.AppScreen.Contacts) }
+            mw.phoneguard.app.ui.activity.BottomNavItem("Settings", currentScreen == mw.phoneguard.app.AppScreen.Settings) { onNavigate(mw.phoneguard.app.AppScreen.Settings) }
         }
     }
 }

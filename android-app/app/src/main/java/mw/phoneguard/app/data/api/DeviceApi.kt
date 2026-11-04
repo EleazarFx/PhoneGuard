@@ -44,4 +44,43 @@ class DeviceApi {
             ApiResult.Failure(e.message ?: "Network error")
         }
     }
+
+    suspend fun postEvent(
+        deviceToken: String,
+        deviceId: String,
+        event: mw.phoneguard.app.data.local.EventEntity
+    ): ApiResult<Unit> {
+        return try {
+            val response: HttpResponse = client.post("${ApiClient.BASE_URL}/device/$deviceId/events") {
+                header("Authorization", "Bearer $deviceToken")
+                setBody(
+                    mw.phoneguard.app.data.models.PostEventRequest(
+                        type = event.type,
+                        timestamp = event.timestamp,
+                        lat = event.lat,
+                        lng = event.lng,
+                        accuracy = event.accuracy,
+                        battery = event.battery,
+                        captureStatus = event.captureStatus,
+                        photoSha256 = event.photoSha256,
+                        clientSeq = event.clientSeq
+                    )
+                )
+            }
+            if (response.status == HttpStatusCode.Created) {
+                ApiResult.Success(Unit)
+            } else {
+                val error = response.body<Map<String, String>>()
+                ApiResult.Failure(error["error"] ?: "Failed to post event")
+            }
+        } catch (e: Exception) {
+            ApiResult.Failure(e.message ?: "Network error")
+        }
+    }
+
+
+
+
+
+
 }

@@ -55,4 +55,17 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             deviceRegistered = tokenStore.hasDeviceRegistered()
         )
     }
+
+
+    private val syncManager = mw.phoneguard.app.data.sync.SyncManager(application.applicationContext)
+
+    fun triggerSync() {
+        viewModelScope.launch {
+            syncManager.syncPendingEvents()
+        }
+    }
+
+
+
+
 }

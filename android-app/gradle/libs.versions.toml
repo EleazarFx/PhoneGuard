@@ -82,6 +82,7 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 
 #viewModel Dependency
 androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
+androidx-compose-foundation-layout = { group = "androidx.compose.foundation", name = "foundation-layout" }
 
 
 [plugins]
