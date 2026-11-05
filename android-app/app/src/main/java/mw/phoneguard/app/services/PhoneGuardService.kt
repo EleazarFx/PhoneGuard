@@ -30,6 +30,7 @@ class PhoneGuardService : Service() {
     private val TAG = "PhoneGuardService"
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private var alertModeManager: AlertModeManager? = null
     private var simReceiver: BroadcastReceiver? = null
     private var screenStateReceiver: ScreenStateReceiver? = null
 
@@ -49,6 +50,25 @@ class PhoneGuardService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, PhoneGuardService::class.java))
         }
+
+
+
+
+        const val ACTION_START_ALERT_MODE = "mw.phoneguard.app.START_ALERT_MODE"
+        const val ACTION_STOP_ALERT_MODE = "mw.phoneguard.app.STOP_ALERT_MODE"
+
+        fun setAlertMode(context: Context, armed: Boolean) {
+            val intent = Intent(context, PhoneGuardService::class.java).apply {
+                action = if (armed) ACTION_START_ALERT_MODE else ACTION_STOP_ALERT_MODE
+            }
+            context.startService(intent)
+        }
+
+
+
+
+
+
     }
 
     override fun onCreate() {
@@ -60,12 +80,27 @@ class PhoneGuardService : Service() {
         registerScreenStateReceiver()
         // Immediate SIM check on service creation (catches boot-time SIM swaps)
         handleSimState()
+
+        //Start Alert Mode if it was armed
+        val tokenStore = TokenStore.get(applicationContext)
+        if (tokenStore.isAlertModeArmed()) {
+            Log.i(TAG, "Alert Mode was armed — starting motion detection")
+            startAlertMode()
+        }
+
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i(TAG, "Service onStartCommand")
+        Log.i(TAG, "onStartCommand (action=${intent?.action})")
+        startForeground(NOTIFICATION_ID, buildNotification())
         handleSimState()
-        // START_STICKY: if Android kills us for memory, it restarts us later
+
+        // NEW: Handle intent actions
+        when (intent?.action) {
+            ACTION_START_ALERT_MODE -> startAlertMode()
+            ACTION_STOP_ALERT_MODE -> stopAlertMode()
+        }
+
         return START_STICKY
     }
 
@@ -73,6 +108,7 @@ class PhoneGuardService : Service() {
 
     override fun onDestroy() {
         Log.w(TAG, "Service onDestroy — this shouldn't happen unless user or system stopped us")
+        stopAlertMode()
         unregisterSimReceiver()
         unregisterScreenStateReceiver()
         serviceScope.cancel()
@@ -285,4 +321,81 @@ class PhoneGuardService : Service() {
             }
         }
     }
+
+
+
+
+
+    fun startAlertMode() {
+        if (alertModeManager != null) {
+            Log.d(TAG, "Alert Mode already active")
+            return
+        }
+
+        alertModeManager = AlertModeManager(applicationContext) {
+            onMotionDetected()
+        }.also { it.start() }
+
+        updateNotificationToArmed()
+        Log.i(TAG, "Alert Mode started")
+    }
+
+    fun stopAlertMode() {
+        alertModeManager?.stop()
+        alertModeManager = null
+        updateNotificationToNormal()
+        Log.i(TAG, "Alert Mode stopped")
+    }
+
+    private fun onMotionDetected() {
+        val tokenStore = TokenStore.get(applicationContext)
+        val deviceId = tokenStore.getDeviceId() ?: return
+
+        serviceScope.launch {
+            try {
+                val db = PhoneGuardDatabase.get(applicationContext)
+                val event = EventEntity(
+                    deviceId = deviceId,
+                    type = "snatch",
+                    timestamp = System.currentTimeMillis(),
+                    captureStatus = "pending_capture",
+                    clientSeq = System.nanoTime()
+                )
+                db.eventDao().upsert(event)
+                Log.i(TAG, "snatch event queued: ${event.id}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to queue snatch event", e)
+            }
+        }
+    }
+
+    private fun updateNotificationToArmed() {
+        val notification = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("PhoneGuard · Alert Mode Armed")
+            .setContentText("Motion detection active")
+            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setOngoing(true)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_SERVICE)
+            .build()
+
+        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        manager.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun updateNotificationToNormal() {
+        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        manager.notify(NOTIFICATION_ID, buildNotification())
+    }
+
+
+
+
+
+
+
+
+
+
+
 }

@@ -94,6 +94,13 @@ class TokenStore private constructor(context: Context) {
     }
 
 
+    fun saveAlertModeArmed(armed: Boolean) {
+        prefs.edit().putBoolean(KEY_ALERT_MODE_ARMED, armed).apply()
+    }
+
+    fun isAlertModeArmed(): Boolean = prefs.getBoolean(KEY_ALERT_MODE_ARMED, false)
+
+
 
 
 
@@ -120,6 +127,8 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_SIM_OPERATOR_CODE = "sim_operator_code"
         private const val KEY_SIM_SUBSCRIPTION_ID = "sim_subscription_id"
         private const val KEY_LAST_LOCK_TIME = "last_lock_time"
+
+        private const val KEY_ALERT_MODE_ARMED = "alert_mode_armed"
 
 
     }

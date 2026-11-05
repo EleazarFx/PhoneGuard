@@ -31,7 +31,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             userEmail = tokenStore.getUserEmail(),
             deviceRegistered = tokenStore.hasDeviceRegistered(),
             isAdminActive = checkAdminActive(),
-            alertModeArmed = false,
+            alertModeArmed = tokenStore.isAlertModeArmed(),
             trustedContactsCount = 0,
             unsyncedEventCount = 0
         )
@@ -51,8 +51,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
 
     fun toggleAlertMode(armed: Boolean) {
+        tokenStore.saveAlertModeArmed(armed)
         _uiState.value = _uiState.value.copy(alertModeArmed = armed)
-        // (Later: this will call the backend and save to a real Alert Mode schedule)
+
+        val context = getApplication<android.app.Application>()
+        try {
+            mw.phoneguard.app.services.PhoneGuardService.setAlertMode(context, armed)
+            android.util.Log.i("HomeViewModel", "Alert Mode toggle → $armed")
+        } catch (e: Exception) {
+            android.util.Log.e("HomeViewModel", "Failed to toggle Alert Mode: ${e.message}", e)
+        }
     }
 
     fun refresh() {
