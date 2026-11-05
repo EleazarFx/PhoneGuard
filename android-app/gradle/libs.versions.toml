@@ -1,6 +1,7 @@
 [versions]
 agp = "9.4.1"
 coreSplashscreen = "1.0.1"
+coreSplashscreenVersion = "1.2.0"
 kotlin = "2.2.10"
 composeBom = "2026.02.01"
 lifecycleViewmodelCompose = "2.8.4"
@@ -35,6 +36,7 @@ espressoCore = "3.6.1"
 # Core Android
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "coreSplashscreen" }
+androidx-core-splashscreen-v120 = { module = "androidx.core:core-splashscreen", version.ref = "coreSplashscreenVersion" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 

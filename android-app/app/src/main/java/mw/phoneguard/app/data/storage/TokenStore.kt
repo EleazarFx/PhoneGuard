@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-class TokenStore(context: Context) {
+class TokenStore private constructor(context: Context) {
 
     private val prefs: SharedPreferences by lazy {
         val masterKey = MasterKey.Builder(context)
@@ -20,7 +20,6 @@ class TokenStore(context: Context) {
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
     }
-
     fun saveUserTokens(accessToken: String, refreshToken: String) {
         prefs.edit()
             .putString(KEY_ACCESS_TOKEN, accessToken)
@@ -61,11 +60,67 @@ class TokenStore(context: Context) {
         prefs.edit().clear().apply()
     }
 
+    fun saveSimIdentity(
+        operatorName: String,
+        countryIso: String,
+        operatorCode: String = "",
+        subscriptionId: String = ""
+    ) {
+        prefs.edit()
+            .putString(KEY_SIM_OPERATOR, operatorName)
+            .putString(KEY_SIM_COUNTRY, countryIso)
+            .putString(KEY_SIM_OPERATOR_CODE, operatorCode)
+            .putString(KEY_SIM_SUBSCRIPTION_ID, subscriptionId)
+            .apply()
+    }
+
+    fun getSimOperatorName(): String? = prefs.getString(KEY_SIM_OPERATOR, null)
+    fun getSimCountryIso(): String? = prefs.getString(KEY_SIM_COUNTRY, null)
+    fun getSimOperatorCode(): String? = prefs.getString(KEY_SIM_OPERATOR_CODE, null)
+    fun getSimSubscriptionId(): String? = prefs.getString(KEY_SIM_SUBSCRIPTION_ID, null)
+
+
+
+
+
+    fun saveLockTime(timestamp: Long) {
+        prefs.edit().putLong(KEY_LAST_LOCK_TIME, timestamp).apply()
+    }
+
+    fun getLockTime(): Long = prefs.getLong(KEY_LAST_LOCK_TIME, 0L)
+
+    fun clearLockTime() {
+        prefs.edit().remove(KEY_LAST_LOCK_TIME).apply()
+    }
+
+
+
+
+
+
     companion object {
+        @Volatile
+        private var INSTANCE: TokenStore? = null
+
+        fun get(context: Context): TokenStore {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: TokenStore(context.applicationContext).also { INSTANCE = it }
+            }
+        }
+
+
         private const val KEY_ACCESS_TOKEN = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_USER_EMAIL = "user_email"
         private const val KEY_DEVICE_ID = "device_id"
         private const val KEY_DEVICE_TOKEN = "device_token"
+
+        private const val KEY_SIM_OPERATOR = "sim_operator_name"
+        private const val KEY_SIM_COUNTRY = "sim_country_iso"
+        private const val KEY_SIM_OPERATOR_CODE = "sim_operator_code"
+        private const val KEY_SIM_SUBSCRIPTION_ID = "sim_subscription_id"
+        private const val KEY_LAST_LOCK_TIME = "last_lock_time"
+
+
     }
 }

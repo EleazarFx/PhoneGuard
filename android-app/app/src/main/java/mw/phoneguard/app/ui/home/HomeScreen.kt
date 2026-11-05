@@ -40,11 +40,15 @@ import mw.phoneguard.app.ui.theme.PanelDark
 import mw.phoneguard.app.ui.theme.TextFaint
 import mw.phoneguard.app.ui.theme.TextMuted
 import mw.phoneguard.app.ui.theme.TextPrimary
+import mw.phoneguard.app.ui.theme.WarnAmber
+
+import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun HomeScreen(
     userEmail: String?,
     deviceRegistered: Boolean,
+    isAdminActive: Boolean,
     alertModeArmed: Boolean,
     lastCheckIn: String,
     trustedContactsCount: Int,
@@ -55,6 +59,7 @@ fun HomeScreen(
     onNavigate: (mw.phoneguard.app.AppScreen) -> Unit,
     currentScreen: mw.phoneguard.app.AppScreen
 ) {
+    val context = LocalContext.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -227,7 +232,7 @@ fun HomeScreen(
 
                 Spacer(Modifier.height(10.dp))
 
-                // Device admin row (shows once user can enable it)
+                // Device admin row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -236,20 +241,35 @@ fun HomeScreen(
                     Column {
                         Text("Device admin", fontSize = 14.sp, color = TextMuted)
                         Text(
-                            "Required for wrong-PIN detection",
+                            if (isAdminActive) "Active — wrong-PIN detection enabled"
+                            else "Required for wrong-PIN detection",
                             fontSize = 11.sp,
-                            color = TextFaint
+                            color = if (isAdminActive) GuardTeal.copy(alpha = 0.7f) else TextFaint
                         )
                     }
-                    androidx.compose.material3.TextButton(onClick = onEnableAdminClick) {
+                    if (isAdminActive) {
                         Text(
-                            "Set up",
+                            "Done",
                             fontSize = 13.sp,
                             color = GuardTeal,
                             fontWeight = FontWeight.SemiBold
                         )
+                    } else {
+                        androidx.compose.material3.TextButton(onClick = onEnableAdminClick) {
+                            Text(
+                                "Set up",
+                                fontSize = 13.sp,
+                                color = GuardTeal,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
+
+
+
+
+
 
             }
 

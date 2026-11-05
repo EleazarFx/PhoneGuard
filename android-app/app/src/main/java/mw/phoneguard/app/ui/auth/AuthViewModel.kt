@@ -11,6 +11,7 @@ import mw.phoneguard.app.data.api.ApiResult
 import mw.phoneguard.app.data.api.AuthApi
 import mw.phoneguard.app.data.api.DeviceApi
 import mw.phoneguard.app.data.storage.TokenStore
+import mw.phoneguard.app.services.PhoneGuardService
 
 /**
  * The state of the auth flow, as seen by the UI.
@@ -31,9 +32,9 @@ data class AuthUiState(
     val resetStep: ResetStep = ResetStep.None
 )
 
-class AuthViewModel(application: Application) : AndroidViewModel(application) {
+class AuthViewModel(private val application: Application) : AndroidViewModel(application) {
 
-    private val tokenStore = TokenStore(application.applicationContext)
+    private val tokenStore = TokenStore.get(application.applicationContext)
     private val authApi = AuthApi()
     private val deviceApi = DeviceApi()
 
@@ -75,6 +76,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     // After login, ensure this phone is registered as a device.
                     ensureDeviceRegistered(result.value.accessToken, state.email)
 
+                    // Save current SIM identity on first login so we can detect future swaps
+                    saveCurrentSimIdentity(application)
+
+                    startProtectionService()
+
+
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
                         isLoggedIn = true,
@@ -83,6 +90,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         errorMessage = null
                     )
                 }
+
                 is ApiResult.Failure -> {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
@@ -124,6 +132,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     tokenStore.saveUserEmail(state.email)
 
                     ensureDeviceRegistered(loginResult.value.accessToken, state.email)
+
+                    // Save current SIM identity on first login so we can detect future swaps
+                    saveCurrentSimIdentity(application)
+
+                    startProtectionService()
 
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
@@ -251,6 +264,60 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+
+
+    private fun saveCurrentSimIdentity(context: android.content.Context) {
+        try {
+            val tm = context.getSystemService(android.content.Context.TELEPHONY_SERVICE)
+                    as? android.telephony.TelephonyManager ?: return
+            val operator = tm.simOperatorName ?: ""
+            val country = tm.simCountryIso ?: ""
+            val operatorCode = tm.simOperator ?: ""
+            val subId = getActiveSubscriptionId(context)
+
+            if (operator.isNotBlank() || country.isNotBlank() || operatorCode.isNotBlank() || subId.isNotBlank()) {
+                tokenStore.saveSimIdentity(operator, country, operatorCode, subId)
+                android.util.Log.i("AuthViewModel", "Initial SIM identity saved: $operator/$country (Code: $operatorCode, Sub: $subId)")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AuthViewModel", "Failed to save SIM identity", e)
+        }
+    }
+
+    private fun getActiveSubscriptionId(context: android.content.Context): String {
+        try {
+            val sm = context.getSystemService(android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE)
+                    as? android.telephony.SubscriptionManager
+            if (sm != null) {
+                @Suppress("MissingPermission")
+                val activeList = sm.activeSubscriptionInfoList
+                if (!activeList.isNullOrEmpty()) {
+                    return activeList.joinToString(",") { sub ->
+                        val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
+                        "${sub.subscriptionId}:$carrier"
+                    }
+                }
+            }
+        } catch (_: SecurityException) {
+            // READ_PHONE_STATE permission not granted
+        } catch (e: Exception) {
+            android.util.Log.w("AuthViewModel", "SubscriptionManager query failed: ${e.message}")
+        }
+        return ""
+    }
+
+
+    private fun startProtectionService() {
+        val context = getApplication<android.app.Application>()
+        try {
+            PhoneGuardService.start(context)
+            android.util.Log.i("AuthViewModel", "PhoneGuardService start requested after login")
+        } catch (e: Exception) {
+            android.util.Log.e("AuthViewModel", "Failed to start service: ${e.message}", e)
+        }
+    }
+
 
 
 

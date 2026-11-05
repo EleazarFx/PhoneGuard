@@ -1,14 +1,21 @@
 package mw.phoneguard.app
 
+import android.Manifest
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -17,18 +24,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
+import mw.phoneguard.app.services.PhoneGuardAdminReceiver
+import mw.phoneguard.app.ui.activity.ActivityScreen
 import mw.phoneguard.app.ui.activity.ActivityViewModel
-
 import mw.phoneguard.app.ui.auth.AuthViewModel
+import mw.phoneguard.app.ui.auth.ForgotPasswordScreen
 import mw.phoneguard.app.ui.auth.LoginScreen
 import mw.phoneguard.app.ui.auth.RegisterScreen
-import mw.phoneguard.app.ui.home.HomeScreen
-import mw.phoneguard.app.ui.theme.PhoneGuardTheme
-
-import mw.phoneguard.app.ui.auth.ForgotPasswordScreen
 import mw.phoneguard.app.ui.auth.ResetPasswordScreen
 import mw.phoneguard.app.ui.auth.ResetStep
+import mw.phoneguard.app.ui.home.HomeScreen
 import mw.phoneguard.app.ui.home.HomeViewModel
+import mw.phoneguard.app.ui.theme.PhoneGuardTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -37,15 +45,30 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Ask for notification permission on Android 13+ (for the foreground service notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val launcher = registerForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                if (!granted) {
+                    android.util.Log.w(
+                        "PhoneGuard",
+                        "POST_NOTIFICATIONS denied — persistent notification may be hidden"
+                    )
+                }
+            }
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
         setContent {
             PhoneGuardTheme {
                 PhoneGuardApp(authViewModel, homeViewModel)
             }
         }
     }
-
-
 }
+
 @Composable
 fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
     val state by authViewModel.uiState.collectAsState()
@@ -54,29 +77,48 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
     var showRegister by remember { mutableStateOf(false) }
     var currentScreen by remember { mutableStateOf(AppScreen.Home) }
 
-    // Define the activityViewModel only if logged in
+    // ActivityViewModel needs a Context and is only used when logged in
     val activityViewModel: ActivityViewModel? = if (state.isLoggedIn) {
-        androidx.lifecycle.viewmodel.compose.viewModel()
+        viewModel()
     } else null
 
     when {
         state.isLoggedIn -> {
             val homeState by homeViewModel.uiState.collectAsState()
 
-            androidx.compose.runtime.LaunchedEffect(Unit) {
+            LaunchedEffect(Unit) {
                 homeViewModel.triggerSync()
+                mw.phoneguard.app.services.PhoneGuardService.start(context)
             }
 
             when (currentScreen) {
                 AppScreen.Home -> HomeScreen(
                     userEmail = homeState.userEmail,
                     deviceRegistered = homeState.deviceRegistered,
+                    isAdminActive = homeState.isAdminActive,
                     alertModeArmed = homeState.alertModeArmed,
                     lastCheckIn = homeState.lastCheckInText,
                     trustedContactsCount = homeState.trustedContactsCount,
                     unsyncedEventCount = homeState.unsyncedEventCount,
                     onToggleAlertMode = homeViewModel::toggleAlertMode,
-                    onEnableAdminClick = { /* ... existing ... */ },
+                    onEnableAdminClick = {
+                        val adminComponent = ComponentName(
+                            context,
+                            PhoneGuardAdminReceiver::class.java
+                        )
+                        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+                            putExtra(
+                                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                "PhoneGuard needs this to detect wrong lock-screen PIN attempts."
+                            )
+                        }
+                        context.startActivity(intent)
+                        // Refresh admin state after a short delay (user will click "Activate" in the system dialog)
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            homeViewModel.refreshAdminState()
+                        }, 1500)
+                    },
                     onLogout = { authViewModel.logout() },
                     onNavigate = { currentScreen = it },
                     currentScreen = currentScreen
@@ -84,24 +126,25 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
 
                 AppScreen.Activity -> {
                     val events by activityViewModel!!.events.collectAsState()
-                    mw.phoneguard.app.ui.activity.ActivityScreen(
+                    ActivityScreen(
                         events = events,
                         currentScreen = currentScreen,
                         onNavigate = { currentScreen = it }
                     )
                 }
 
-                else -> {
-                    // Placeholder for Contacts/Settings
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Coming soon", color = MaterialTheme.colorScheme.onSurface)
+                // Contacts and Settings are NOT implemented yet.
+                // Redirect back to Home rather than show a broken screen.
+                AppScreen.Contacts, AppScreen.Settings -> {
+                    // Auto-redirect to Home after user lands here.
+                    // Real implementations come in later phases.
+                    LaunchedEffect(currentScreen) {
+                        currentScreen = AppScreen.Home
                     }
                 }
             }
         }
 
-
-        // 2. Reset flow: request code
         state.resetStep == ResetStep.RequestOtp -> ForgotPasswordScreen(
             state = state,
             onEmailChange = authViewModel::onEmailChange,
@@ -109,7 +152,6 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
             onCancel = authViewModel::cancelReset
         )
 
-        // 3. Reset flow: enter code + new password
         state.resetStep == ResetStep.EnterOtp -> ResetPasswordScreen(
             state = state,
             onOtpChange = authViewModel::onOtpChange,
@@ -118,7 +160,6 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
             onCancel = authViewModel::cancelReset
         )
 
-        // 4. Register screen
         showRegister -> RegisterScreen(
             state = state,
             onEmailChange = authViewModel::onEmailChange,
@@ -127,7 +168,6 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
             onGoToLogin = { showRegister = false }
         )
 
-        // 5. Login screen (default)
         else -> LoginScreen(
             state = state,
             onEmailChange = authViewModel::onEmailChange,
@@ -139,7 +179,6 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
         )
     }
 }
-
 
 enum class AppScreen {
     Home, Activity, Contacts, Settings

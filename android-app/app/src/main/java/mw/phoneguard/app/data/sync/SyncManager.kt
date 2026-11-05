@@ -12,7 +12,7 @@ import mw.phoneguard.app.data.storage.TokenStore
 class SyncManager(context: Context) {
 
     private val db = PhoneGuardDatabase.get(context.applicationContext)
-    private val tokenStore = TokenStore(context.applicationContext)
+    private val tokenStore = TokenStore.get(context.applicationContext)
     private val deviceApi = DeviceApi()
     private val TAG = "PhoneGuardSync"
 

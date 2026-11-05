@@ -11,7 +11,7 @@ import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
 
 class ActivityViewModel(application: Application) : AndroidViewModel(application) {
-    private val tokenStore = TokenStore(application.applicationContext)
+    private val tokenStore = TokenStore.get(application.applicationContext)
     private val db = PhoneGuardDatabase.get(application.applicationContext)
 
     val events: StateFlow<List<EventEntity>> = db.eventDao()
