@@ -111,6 +111,10 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
             _uiState.value = state.copy(errorMessage = "Password must be at least 8 characters")
             return
         }
+        if (tokenStore.hasDeviceRegistered()) {
+            _uiState.value = state.copy(errorMessage = "Device already registered")
+            return
+        }
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
@@ -279,6 +283,45 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
             if (operator.isNotBlank() || country.isNotBlank() || operatorCode.isNotBlank() || subId.isNotBlank()) {
                 tokenStore.saveSimIdentity(operator, country, operatorCode, subId)
                 android.util.Log.i("AuthViewModel", "Initial SIM identity saved: $operator/$country (Code: $operatorCode, Sub: $subId)")
+            }
+
+            if (!tokenStore.hasOriginalSimIdentity()) {
+                val operators = mutableSetOf<String>()
+                val countries = mutableSetOf<String>()
+                val codes = mutableSetOf<String>()
+                val subscriptions = mutableSetOf<String>()
+
+                if (operator.isNotBlank()) operators.add(operator)
+                if (country.isNotBlank()) countries.add(country)
+                if (operatorCode.isNotBlank()) codes.add(operatorCode)
+                if (subId.isNotBlank()) subscriptions.add(subId)
+
+                try {
+                    val sm = context.getSystemService(android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE)
+                            as? android.telephony.SubscriptionManager
+                    if (sm != null) {
+                        @Suppress("MissingPermission")
+                        val activeList = sm.activeSubscriptionInfoList
+                        if (!activeList.isNullOrEmpty()) {
+                            for (sub in activeList) {
+                                if (!sub.carrierName.isNullOrBlank()) operators.add(sub.carrierName.toString())
+                                if (!sub.countryIso.isNullOrBlank()) countries.add(sub.countryIso.toString())
+                                val mccMnc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                    "${sub.mccString.orEmpty()}${sub.mncString.orEmpty()}"
+                                } else ""
+                                if (mccMnc.isNotBlank()) codes.add(mccMnc)
+                                val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
+                                subscriptions.add("${sub.subscriptionId}:$carrier")
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                if (codes.isEmpty() && operatorCode.isNotBlank()) codes.add(operatorCode)
+                if (codes.isNotEmpty()) {
+                    tokenStore.saveOriginalSimIdentity(operators, countries, codes, subscriptions)
+                    android.util.Log.i("AuthViewModel", "Original SIM baseline saved: codes=$codes")
+                }
             }
         } catch (e: Exception) {
             android.util.Log.e("AuthViewModel", "Failed to save SIM identity", e)

@@ -42,21 +42,37 @@ class AlertModeManager(
 
     // Try linear acceleration first; fall back to raw accelerometer
     private val sensor: Sensor? = run {
+        // Tier 1: Wake-up linear acceleration (best case)
+        val wakeLinear = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION, true)
+        if (wakeLinear != null) {
+            Log.i(TAG, "Sensor: LINEAR_ACCELERATION (wake-up capable)")
+            return@run wakeLinear
+        }
+
+        // Tier 2: Non-wake-up linear acceleration
         val linear = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
         if (linear != null) {
-            Log.i(TAG, "Using LINEAR_ACCELERATION (gravity removed by OS)")
-            linear
-        } else {
-            val raw = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-            if (raw != null) {
-                Log.i(TAG, "Using ACCELEROMETER (manual gravity removal)")
-            } else {
-                Log.e(TAG, "No accelerometer sensor available on this device!")
-            }
-            raw
+            Log.w(TAG, "Sensor: LINEAR_ACCELERATION (non-wake-up — motion only when screen on)")
+            return@run linear
         }
-    }
 
+        // Tier 3: Wake-up raw accelerometer
+        val wakeRaw = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true)
+        if (wakeRaw != null) {
+            Log.i(TAG, "Sensor: ACCELEROMETER (wake-up capable, manual gravity removal)")
+            return@run wakeRaw
+        }
+
+        // Tier 4: Non-wake-up raw accelerometer (guaranteed to exist if anything does)
+        val raw = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        if (raw != null) {
+            Log.w(TAG, "Sensor: ACCELEROMETER (non-wake-up — motion only when screen on)")
+            return@run raw
+        }
+
+        Log.e(TAG, "No accelerometer sensor of any type available — this should never happen")
+        null
+    }
     private val useLinear: Boolean = sensor?.type == Sensor.TYPE_LINEAR_ACCELERATION
 
     // Thresholds tuned per sensor type
@@ -78,10 +94,13 @@ class AlertModeManager(
             Log.e(TAG, "Cannot start — no sensor available")
             return
         }
+
         val ok = sensorManager.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME)
         if (ok) {
             isRegistered = true
-            Log.i(TAG, "Sensor registered (type=${if (useLinear) "LINEAR" else "RAW"}, threshold=$threshold, consecutive=$consecutiveRequired)")
+            val wakeUpCapable = s.isWakeUpSensor()
+            Log.i(TAG, "Sensor registered (type=${if (useLinear) "LINEAR" else "RAW"}, " +
+                    "wakeUp=$wakeUpCapable, threshold=$threshold, consecutive=$consecutiveRequired)")
         } else {
             Log.e(TAG, "registerListener returned false")
         }

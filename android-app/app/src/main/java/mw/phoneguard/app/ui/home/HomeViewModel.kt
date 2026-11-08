@@ -103,6 +103,86 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun resetOriginalSim(onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val tm = context.getSystemService(android.content.Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
+                if (tm == null) {
+                    onResult(false, "TelephonyManager unavailable")
+                    return@launch
+                }
+
+                val operator = tm.simOperatorName ?: ""
+                val country = tm.simCountryIso ?: ""
+                val operatorCode = tm.simOperator ?: ""
+                val subId = getActiveSubscriptionId(context)
+
+                val operators = mutableSetOf<String>()
+                val countries = mutableSetOf<String>()
+                val codes = mutableSetOf<String>()
+                val subscriptions = mutableSetOf<String>()
+
+                if (operator.isNotBlank()) operators.add(operator)
+                if (country.isNotBlank()) countries.add(country)
+                if (operatorCode.isNotBlank()) codes.add(operatorCode)
+                if (subId.isNotBlank()) subscriptions.add(subId)
+
+                try {
+                    val sm = context.getSystemService(android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE)
+                            as? android.telephony.SubscriptionManager
+                    if (sm != null) {
+                        @Suppress("MissingPermission")
+                        val activeList = sm.activeSubscriptionInfoList
+                        if (!activeList.isNullOrEmpty()) {
+                            for (sub in activeList) {
+                                if (!sub.carrierName.isNullOrBlank()) operators.add(sub.carrierName.toString())
+                                if (!sub.countryIso.isNullOrBlank()) countries.add(sub.countryIso.toString())
+                                val mccMnc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                    "${sub.mccString.orEmpty()}${sub.mncString.orEmpty()}"
+                                } else ""
+                                if (mccMnc.isNotBlank()) codes.add(mccMnc)
+                                val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
+                                subscriptions.add("${sub.subscriptionId}:$carrier")
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                if (codes.isEmpty() && operatorCode.isNotBlank()) codes.add(operatorCode)
+
+                if (codes.isNotEmpty()) {
+                    tokenStore.resetOriginalSimIdentity(operators, countries, codes, subscriptions)
+                    tokenStore.saveSimIdentity(operator, country, operatorCode, subId)
+                    onResult(true, "Original SIM baseline updated successfully (${codes.size} SIM(s))")
+                } else {
+                    onResult(false, "No active SIM detected to set as baseline")
+                }
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "Failed to reset original SIM", e)
+                onResult(false, "Error: ${e.message}")
+            }
+        }
+    }
+
+    private fun getActiveSubscriptionId(context: Application): String {
+        try {
+            val sm = context.getSystemService(android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE)
+                    as? android.telephony.SubscriptionManager
+            if (sm != null) {
+                @Suppress("MissingPermission")
+                val activeList = sm.activeSubscriptionInfoList
+                if (!activeList.isNullOrEmpty()) {
+                    return activeList.joinToString(",") { sub ->
+                        val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
+                        "${sub.subscriptionId}:$carrier"
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return ""
+    }
+
 
 
 

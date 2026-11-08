@@ -1,5 +1,6 @@
 package mw.phoneguard.app.services
 
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -13,25 +14,20 @@ import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
 
 /**
- * Detects "unlock after lockout" as a proxy for failed PIN attempts.
+ * Tracks screen state to keep the Alert Mode motion sensor active
+ * whenever the phone is NOT unlocked.
  *
- * Android 10+ on many OEM ROMs (Transsion, Xiaomi, Samsung) does NOT fire
- * the standard onPasswordFailed callback. This receiver works around that:
- *
- *  1. On screen-off (or lock), record the time.
- *  2. On unlock (ACTION_USER_PRESENT), measure the elapsed time.
- *  3. If elapsed > LOCKOUT_THRESHOLD_MS, treat it as a probable failed-attempt
- *     lockout and log a wrong_pin event.
- *
- * This is a heuristic, not a guarantee. False positives are low (users don't
- * normally take 30+ seconds to unlock after locking). False negatives are low
- * on Android 10+ because the lockout timer is enforced by the OS.
+ * Rules:
+ *  - SCREEN_OFF      → not unlocked → start monitoring
+ *  - SCREEN_ON       → check KeyguardManager:
+ *                       locked   → keep monitoring
+ *                       unlocked → stop monitoring
+ *  - USER_PRESENT    → real unlock → stop monitoring
+ *  - BOOT_COMPLETED  → check current lock state → monitor if locked
  */
 class ScreenStateReceiver : BroadcastReceiver() {
 
     private val TAG = "PhoneGuardScreenState"
-
-    // 30 seconds from lock to unlock = probable failed-attempt lockout
     private val LOCKOUT_THRESHOLD_MS = 30_000L
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -40,60 +36,96 @@ class ScreenStateReceiver : BroadcastReceiver() {
 
         when (action) {
             Intent.ACTION_SCREEN_OFF -> {
-                // Screen turned off (likely going to lock state)
                 val store = TokenStore.get(context.applicationContext)
                 store.saveLockTime(System.currentTimeMillis())
-                Log.d(TAG, "Lock time recorded: ${System.currentTimeMillis()}")
+                Log.d(TAG, "Lock time recorded")
+
+                // Not unlocked → monitor motion
+                notifyService(context, PhoneGuardService.ACTION_NOT_UNLOCKED)
+            }
+
+            Intent.ACTION_SCREEN_ON -> {
+                val kgm = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                val isLocked = kgm?.isDeviceLocked() == true || kgm?.isKeyguardLocked == true
+                Log.d(TAG, "Screen on. isLocked=$isLocked")
+
+                if (isLocked) {
+                    // Screen on but still locked → keep monitoring
+                    notifyService(context, PhoneGuardService.ACTION_NOT_UNLOCKED)
+                } else {
+                    // Screen on and already unlocked → stop monitoring
+                    notifyService(context, PhoneGuardService.ACTION_UNLOCKED)
+                }
             }
 
             Intent.ACTION_USER_PRESENT -> {
-                // User successfully unlocked
-                handleUnlock(context)
+                Log.d(TAG, "User present (real unlock)")
+                notifyService(context, PhoneGuardService.ACTION_UNLOCKED)
+                handleUnlockDelay(context)
+            }
+
+            Intent.ACTION_BOOT_COMPLETED -> {
+                // After reboot: check if phone is currently locked
+                val kgm = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                val isLocked = kgm?.isDeviceLocked() == true || kgm?.isKeyguardLocked == true
+                Log.d(TAG, "Boot completed. isLocked=$isLocked")
+
+                if (isLocked) {
+                    notifyService(context, PhoneGuardService.ACTION_NOT_UNLOCKED)
+                } else {
+                    notifyService(context, PhoneGuardService.ACTION_UNLOCKED)
+                }
             }
         }
     }
 
-    private fun handleUnlock(context: Context) {
-        val store = TokenStore.get(context.applicationContext)
-        val deviceId = store.getDeviceId() ?: run {
-            Log.w(TAG, "No device registered, skipping unlock analysis")
-            return
+    private fun notifyService(context: Context, action: String) {
+        try {
+            val serviceIntent = Intent(context, PhoneGuardService::class.java).apply {
+                this.action = action
+            }
+            context.startService(serviceIntent)
+            Log.d(TAG, "Sent $action to service")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to notify service: ${e.message}", e)
         }
+    }
+
+    private fun handleUnlockDelay(context: Context) {
+        val store = TokenStore.get(context.applicationContext)
+        val deviceId = store.getDeviceId() ?: return
 
         val lockTime = store.getLockTime()
-        if (lockTime == 0L) {
-            Log.d(TAG, "No lock time recorded — skipping")
-            return
-        }
+        if (lockTime == 0L) return
 
         val elapsed = System.currentTimeMillis() - lockTime
         Log.i(TAG, "Time from lock to unlock: ${elapsed}ms")
-
-        // Clear the lock time so the same lock session isn't re-analyzed
         store.clearLockTime()
 
         if (elapsed < LOCKOUT_THRESHOLD_MS) {
-            Log.d(TAG, "Normal unlock (${elapsed}ms) — no event")
+            Log.d(TAG, "Normal unlock — no event")
             return
         }
 
         Log.w(TAG, "!!! PROBABLE FAILED-ATTEMPT LOCKOUT DETECTED (${elapsed}ms) !!!")
+        queueEvent(context, deviceId, "wrong_pin")
+    }
 
+    private fun queueEvent(context: Context, deviceId: String, type: String) {
         val app = context.applicationContext as? mw.phoneguard.app.PhoneGuardApplication
         val scope = app?.appScope ?: CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
         scope.launch {
             try {
                 val db = PhoneGuardDatabase.get(context.applicationContext)
                 val event = EventEntity(
                     deviceId = deviceId,
-                    type = "wrong_pin",
+                    type = type,
                     timestamp = System.currentTimeMillis(),
                     captureStatus = "pending_capture",
                     clientSeq = System.nanoTime()
                 )
                 db.eventDao().upsert(event)
-                Log.i(TAG, "wrong_pin event queued (from unlock-delay heuristic): ${event.id}")
+                Log.i(TAG, "$type event queued: ${event.id}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue event", e)
             }

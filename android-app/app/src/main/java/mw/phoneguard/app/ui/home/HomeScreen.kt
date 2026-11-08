@@ -55,6 +55,7 @@ fun HomeScreen(
     unsyncedEventCount: Int,
     onToggleAlertMode: (Boolean) -> Unit,
     onEnableAdminClick: () -> Unit,
+    onResetOriginalSim: () -> Unit,
     onLogout: () -> Unit,
     onNavigate: (mw.phoneguard.app.AppScreen) -> Unit,
     currentScreen: mw.phoneguard.app.AppScreen
@@ -264,6 +265,34 @@ fun HomeScreen(
                             )
                         }
                     }
+                }
+
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
+                Spacer(Modifier.height(14.dp))
+
+                // Reset Original SIM row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickableNoRipple { onResetOriginalSim() },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Reset Original SIM", fontSize = 14.sp, color = TextMuted)
+                        Text(
+                            "Update trusted baseline SIM/eSIM",
+                            fontSize = 11.sp,
+                            color = TextFaint
+                        )
+                    }
+                    Text(
+                        "Reset",
+                        fontSize = 13.sp,
+                        color = GuardTeal,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
 
 

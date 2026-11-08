@@ -24,6 +24,8 @@ import mw.phoneguard.app.R
 import mw.phoneguard.app.data.local.EventEntity
 import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
+import android.app.KeyguardManager
+
 
 class PhoneGuardService : Service() {
 
@@ -31,6 +33,8 @@ class PhoneGuardService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var alertModeManager: AlertModeManager? = null
+
+    private var snatchGuard: SnatchGuard? = null
     private var simReceiver: BroadcastReceiver? = null
     private var screenStateReceiver: ScreenStateReceiver? = null
 
@@ -64,6 +68,11 @@ class PhoneGuardService : Service() {
             context.startService(intent)
         }
 
+        const val ACTION_SCREEN_LOCKED = "mw.phoneguard.app.SCREEN_LOCKED"
+        const val ACTION_SCREEN_UNLOCKED = "mw.phoneguard.app.SCREEN_UNLOCKED"
+        const val ACTION_NOT_UNLOCKED = "mw.phoneguard.app.NOT_UNLOCKED"
+        const val ACTION_UNLOCKED = "mw.phoneguard.app.UNLOCKED"
+
 
 
 
@@ -81,11 +90,20 @@ class PhoneGuardService : Service() {
         // Immediate SIM check on service creation (catches boot-time SIM swaps)
         handleSimState()
 
-        //Start Alert Mode if it was armed
+        // Start motion detection only if alert mode is armed AND device/screen locked
         val tokenStore = TokenStore.get(applicationContext)
         if (tokenStore.isAlertModeArmed()) {
-            Log.i(TAG, "Alert Mode was armed — starting motion detection")
-            startAlertMode()
+            val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+            val isLocked = keyguardManager?.isDeviceLocked() == true || keyguardManager?.isKeyguardLocked == true
+            if (isLocked) {
+                Log.i(TAG, "Alert Mode armed + device/screen locked — starting motion detection")
+                startAlertMode()
+            } else {
+                Log.i(TAG, "Alert Mode armed but device/screen unlocked — motion detection will not start")
+                stopAlertMode()
+            }
+        } else {
+            stopAlertMode()
         }
 
     }
@@ -95,10 +113,52 @@ class PhoneGuardService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         handleSimState()
 
-        // NEW: Handle intent actions
         when (intent?.action) {
-            ACTION_START_ALERT_MODE -> startAlertMode()
+            ACTION_START_ALERT_MODE -> {
+                val tokenStore = TokenStore.get(applicationContext)
+                if (tokenStore.isAlertModeArmed()) {
+                    val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+                    val isLocked = keyguardManager?.isDeviceLocked() == true || keyguardManager?.isKeyguardLocked == true
+                    if (isLocked) {
+                        Log.i(TAG, "Alert Mode armed via action + device/screen locked — starting motion detection")
+                        startAlertMode()
+                    } else {
+                        Log.i(TAG, "Alert Mode armed via action but device/screen unlocked — waiting for lock")
+                        stopAlertMode()
+                    }
+                }
+            }
             ACTION_STOP_ALERT_MODE -> stopAlertMode()
+
+            ACTION_NOT_UNLOCKED -> {
+                // Phone is NOT unlocked (screen off, or screen on but locked)
+                // → ensure motion sensor is on if actually locked
+                val tokenStore = TokenStore.get(applicationContext)
+                if (tokenStore.isAlertModeArmed()) {
+                    val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+                    val isLocked = keyguardManager?.isDeviceLocked() == true || keyguardManager?.isKeyguardLocked == true
+                    if (isLocked) {
+                        if (alertModeManager == null) {
+                            Log.i(TAG, "Phone not unlocked + Alert Mode armed — starting motion detection")
+                            startAlertMode()
+                        }
+                    } else {
+                        Log.i(TAG, "ACTION_NOT_UNLOCKED received but device is actually unlocked — stopping motion detection")
+                        stopAlertMode()
+                    }
+                }
+            }
+
+            ACTION_UNLOCKED -> {
+                // Phone is unlocked → owner is present → stop motion sensor
+                // Also cancel any active SnatchGuard (owner proved identity)
+                if (alertModeManager != null) {
+                    Log.i(TAG, "Phone unlocked — stopping motion detection")
+                    stopAlertMode()
+                }
+                snatchGuard?.stop()
+                snatchGuard = null
+            }
         }
 
         return START_STICKY
@@ -108,6 +168,8 @@ class PhoneGuardService : Service() {
 
     override fun onDestroy() {
         Log.w(TAG, "Service onDestroy — this shouldn't happen unless user or system stopped us")
+        snatchGuard?.stop()
+        snatchGuard = null
         stopAlertMode()
         unregisterSimReceiver()
         unregisterScreenStateReceiver()
@@ -206,6 +268,7 @@ class PhoneGuardService : Service() {
         val receiver = ScreenStateReceiver()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_USER_PRESENT)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -243,36 +306,72 @@ class PhoneGuardService : Service() {
         val operatorCode = tm.simOperator ?: ""
         val subscriptionId = getActiveSubscriptionId()
 
-        val storedOperator = tokenStore.getSimOperatorName() ?: ""
-        val storedCountry = tokenStore.getSimCountryIso() ?: ""
-        val storedOperatorCode = tokenStore.getSimOperatorCode() ?: ""
-        val storedSubId = tokenStore.getSimSubscriptionId() ?: ""
+        val currentCodes = mutableSetOf<String>()
+        if (operatorCode.isNotBlank()) currentCodes.add(operatorCode)
 
-        Log.i(TAG, "SIM check: current='$operator/$country' (code='$operatorCode', sub='$subscriptionId') stored='$storedOperator/$storedCountry' (code='$storedOperatorCode', sub='$storedSubId')")
+        val currentOperators = mutableSetOf<String>()
+        if (operator.isNotBlank()) currentOperators.add(operator)
 
-        // First run — store initial identity
-        if (storedOperator.isBlank() && storedCountry.isBlank() && storedOperatorCode.isBlank() && storedSubId.isBlank()) {
-            if (operator.isNotBlank() || country.isNotBlank() || operatorCode.isNotBlank() || subscriptionId.isNotBlank()) {
+        val currentCountries = mutableSetOf<String>()
+        if (country.isNotBlank()) currentCountries.add(country)
+
+        val currentSubscriptions = mutableSetOf<String>()
+        if (subscriptionId.isNotBlank()) currentSubscriptions.add(subscriptionId)
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val sm = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+                if (sm != null) {
+                    @Suppress("MissingPermission")
+                    val activeList = sm.activeSubscriptionInfoList
+                    if (!activeList.isNullOrEmpty()) {
+                        for (sub in activeList) {
+                            if (!sub.carrierName.isNullOrBlank()) currentOperators.add(sub.carrierName.toString())
+                            if (!sub.countryIso.isNullOrBlank()) currentCountries.add(sub.countryIso.toString())
+                            val mccMnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                "${sub.mccString.orEmpty()}${sub.mncString.orEmpty()}"
+                            } else ""
+                            if (mccMnc.isNotBlank()) currentCodes.add(mccMnc)
+                            val carrier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
+                            currentSubscriptions.add("${sub.subscriptionId}:$carrier")
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        if (!tokenStore.hasOriginalSimIdentity()) {
+            if (currentCodes.isNotEmpty()) {
+                tokenStore.saveOriginalSimIdentity(currentOperators, currentCountries, currentCodes, currentSubscriptions)
                 tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
-                Log.i(TAG, "First SIM identity stored")
+                Log.i(TAG, "First SIM identity baseline stored: codes=$currentCodes")
             }
             return
         }
 
-        val nameChanged = operator.isNotBlank() && storedOperator.isNotBlank() && operator != storedOperator
-        val countryChanged = country.isNotBlank() && storedCountry.isNotBlank() && country != storedCountry
-        val codeChanged = operatorCode.isNotBlank() && storedOperatorCode.isNotBlank() && operatorCode != storedOperatorCode
-        val subChanged = subscriptionId.isNotBlank() && storedSubId.isNotBlank() && subscriptionId != storedSubId
+        val originalCodes = tokenStore.getOriginalSimCodes() ?: emptySet()
+        val matchesOriginal = currentCodes.isNotEmpty() && originalCodes.isNotEmpty() && (currentCodes == originalCodes || currentCodes.intersect(originalCodes).isNotEmpty())
 
-        val changed = nameChanged || countryChanged || codeChanged || subChanged
-
-        if (!changed) {
-            Log.d(TAG, "SIM unchanged")
+        if (matchesOriginal) {
+            val lastAlerted = tokenStore.getLastAlertedSimCodes()
+            if (lastAlerted != null) {
+                Log.i(TAG, "Original SIM re-inserted; clearing previous SIM change alert state.")
+                tokenStore.clearLastAlertedSimCodes()
+            }
+            tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
+            Log.d(TAG, "SIM check: Original trusted SIM active (codes=$currentCodes)")
             return
         }
 
-        Log.w(TAG, "!!! SIM CHANGE DETECTED !!! (name=$nameChanged, country=$countryChanged, code=$codeChanged, sub=$subChanged)")
+        val lastAlerted = tokenStore.getLastAlertedSimCodes()
+        if (lastAlerted == currentCodes) {
+            Log.d(TAG, "Foreign SIM active but already alerted for codes=$currentCodes")
+            return
+        }
+
+        Log.w(TAG, "!!! FOREIGN SIM CHANGE DETECTED !!! (currentCodes=$currentCodes, originalCodes=$originalCodes)")
         queueEvent(deviceId, "sim_change")
+        tokenStore.saveLastAlertedSimCodes(currentCodes)
         tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
     }
 
@@ -341,6 +440,8 @@ class PhoneGuardService : Service() {
     }
 
     fun stopAlertMode() {
+        snatchGuard?.stop()
+        snatchGuard = null
         alertModeManager?.stop()
         alertModeManager = null
         updateNotificationToNormal()
@@ -351,6 +452,9 @@ class PhoneGuardService : Service() {
         val tokenStore = TokenStore.get(applicationContext)
         val deviceId = tokenStore.getDeviceId() ?: return
 
+        Log.w(TAG, "Motion detected — queuing snatch event and activating SnatchGuard")
+
+        // Queue the initial event (queued on first motion, not after grace period)
         serviceScope.launch {
             try {
                 val db = PhoneGuardDatabase.get(applicationContext)
@@ -362,10 +466,15 @@ class PhoneGuardService : Service() {
                     clientSeq = System.nanoTime()
                 )
                 db.eventDao().upsert(event)
-                Log.i(TAG, "snatch event queued: ${event.id}")
+                Log.i(TAG, "snatch event queued on motion: ${event.id}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue snatch event", e)
             }
+        }
+
+        // Activate SnatchGuard (plays alarm, starts grace period, locks if not unlocked)
+        if (snatchGuard == null) {
+            snatchGuard = SnatchGuard(applicationContext).also { it.start() }
         }
     }
 
@@ -389,6 +498,8 @@ class PhoneGuardService : Service() {
     }
 
 
+
+    // (removed redundant runtime receiver code, using ScreenStateReceiver instead)
 
 
 

@@ -119,6 +119,11 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
                             homeViewModel.refreshAdminState()
                         }, 1500)
                     },
+                    onResetOriginalSim = {
+                        homeViewModel.resetOriginalSim { _, msg ->
+                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
                     onLogout = { authViewModel.logout() },
                     onNavigate = { currentScreen = it },
                     currentScreen = currentScreen
