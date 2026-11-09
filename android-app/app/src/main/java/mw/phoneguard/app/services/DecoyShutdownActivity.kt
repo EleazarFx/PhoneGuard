@@ -42,14 +42,14 @@ class DecoyShutdownActivity : ComponentActivity() {
             val tokenStore = TokenStore.get(applicationContext)
             val deviceId = tokenStore.getDeviceId() ?: "unknown_device"
             val db = PhoneGuardDatabase.get(applicationContext)
-            db.eventDao().upsert(
-                EventEntity(
-                    deviceId = deviceId,
-                    type = "tamper",
-                    timestamp = System.currentTimeMillis(),
-                    captureStatus = "decoy_shutdown_triggered"
-                )
+            var event = EventEntity(
+                deviceId = deviceId,
+                type = "tamper",
+                timestamp = System.currentTimeMillis(),
+                captureStatus = "pending_capture"
             )
+            event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
+            db.eventDao().upsert(event)
         }
 
         setContent {

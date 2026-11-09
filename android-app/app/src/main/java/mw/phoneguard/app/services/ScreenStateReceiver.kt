@@ -117,15 +117,16 @@ class ScreenStateReceiver : BroadcastReceiver() {
         scope.launch {
             try {
                 val db = PhoneGuardDatabase.get(context.applicationContext)
-                val event = EventEntity(
+                var event = EventEntity(
                     deviceId = deviceId,
                     type = type,
                     timestamp = System.currentTimeMillis(),
                     captureStatus = "pending_capture",
                     clientSeq = System.nanoTime()
                 )
+                event = EvidenceCapturer(context.applicationContext).captureAndAttachEvidence(event)
                 db.eventDao().upsert(event)
-                Log.i(TAG, "$type event queued: ${event.id}")
+                Log.i(TAG, "$type event queued with evidence: ${event.id}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue event", e)
             }

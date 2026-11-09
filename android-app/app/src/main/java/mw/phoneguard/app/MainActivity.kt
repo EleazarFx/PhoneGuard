@@ -36,6 +36,8 @@ import mw.phoneguard.app.ui.auth.ResetPasswordScreen
 import mw.phoneguard.app.ui.auth.ResetStep
 import mw.phoneguard.app.ui.home.HomeScreen
 import mw.phoneguard.app.ui.home.HomeViewModel
+import mw.phoneguard.app.ui.contacts.ContactsScreen
+import mw.phoneguard.app.ui.settings.SettingsScreen
 import mw.phoneguard.app.ui.theme.PhoneGuardTheme
 
 class MainActivity : ComponentActivity() {
@@ -124,6 +126,12 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
                             android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
                         }
                     },
+                    onTestDecoyShutdown = {
+                        val intent = Intent(context, mw.phoneguard.app.services.DecoyShutdownActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    },
                     onLogout = { authViewModel.logout() },
                     onNavigate = { currentScreen = it },
                     currentScreen = currentScreen
@@ -138,14 +146,18 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
                     )
                 }
 
-                // Contacts and Settings are NOT implemented yet.
-                // Redirect back to Home rather than show a broken screen.
-                AppScreen.Contacts, AppScreen.Settings -> {
-                    // Auto-redirect to Home after user lands here.
-                    // Real implementations come in later phases.
-                    LaunchedEffect(currentScreen) {
-                        currentScreen = AppScreen.Home
-                    }
+                AppScreen.Contacts -> {
+                    ContactsScreen(
+                        currentScreen = currentScreen,
+                        onNavigate = { currentScreen = it }
+                    )
+                }
+
+                AppScreen.Settings -> {
+                    SettingsScreen(
+                        currentScreen = currentScreen,
+                        onNavigate = { currentScreen = it }
+                    )
                 }
             }
         }

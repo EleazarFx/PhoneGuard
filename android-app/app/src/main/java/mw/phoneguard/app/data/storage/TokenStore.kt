@@ -140,10 +140,44 @@ class TokenStore private constructor(context: Context) {
 
     fun isAlertModeArmed(): Boolean = prefs.getBoolean(KEY_ALERT_MODE_ARMED, false)
 
+    fun getTrustedContacts(): List<Pair<String, String>> {
+        val set = prefs.getStringSet(KEY_TRUSTED_CONTACTS, emptySet()) ?: emptySet()
+        return set.mapNotNull { item ->
+            val parts = item.split("|", limit = 2)
+            if (parts.size == 2) parts[0] to parts[1] else null
+        }
+    }
 
+    fun saveTrustedContacts(contacts: List<Pair<String, String>>) {
+        val set = contacts.map { "${it.first}|${it.second}" }.toSet()
+        prefs.edit().putStringSet(KEY_TRUSTED_CONTACTS, set).apply()
+    }
 
+    fun isVideoEvidenceEnabled(): Boolean = prefs.getBoolean(KEY_VIDEO_EVIDENCE, false)
+    fun saveVideoEvidenceEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_VIDEO_EVIDENCE, enabled).apply()
 
+    fun isPeriodicLocationEnabled(): Boolean = prefs.getBoolean(KEY_PERIODIC_LOCATION, true)
+    fun savePeriodicLocationEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_PERIODIC_LOCATION, enabled).apply()
 
+    fun isOfflineAutoLockEnabled(): Boolean = prefs.getBoolean(KEY_OFFLINE_AUTOLOCK, false)
+    fun saveOfflineAutoLockEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_OFFLINE_AUTOLOCK, enabled).apply()
+
+    fun isRemoteWipeEnabled(): Boolean = prefs.getBoolean(KEY_REMOTE_WIPE, false)
+    fun saveRemoteWipeEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_REMOTE_WIPE, enabled).apply()
+
+    fun saveSafeZone(lat: Double, lng: Double, radiusMeters: Float, enabled: Boolean) {
+        prefs.edit()
+            .putFloat(KEY_SAFE_LAT, lat.toFloat())
+            .putFloat(KEY_SAFE_LNG, lng.toFloat())
+            .putFloat(KEY_SAFE_RADIUS, radiusMeters)
+            .putBoolean(KEY_SAFE_ENABLED, enabled)
+            .apply()
+    }
+
+    fun isSafeZoneEnabled(): Boolean = prefs.getBoolean(KEY_SAFE_ENABLED, false)
+    fun getSafeLat(): Double = prefs.getFloat(KEY_SAFE_LAT, 0f).toDouble()
+    fun getSafeLng(): Double = prefs.getFloat(KEY_SAFE_LNG, 0f).toDouble()
+    fun getSafeRadius(): Float = prefs.getFloat(KEY_SAFE_RADIUS, 100f)
 
     companion object {
         @Volatile
@@ -154,7 +188,6 @@ class TokenStore private constructor(context: Context) {
                 INSTANCE ?: TokenStore(context.applicationContext).also { INSTANCE = it }
             }
         }
-
 
         private const val KEY_ACCESS_TOKEN = "access_token"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
@@ -174,7 +207,14 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_LAST_LOCK_TIME = "last_lock_time"
 
         private const val KEY_ALERT_MODE_ARMED = "alert_mode_armed"
-
-
+        private const val KEY_TRUSTED_CONTACTS = "trusted_contacts_set"
+        private const val KEY_VIDEO_EVIDENCE = "opt_in_video_evidence"
+        private const val KEY_PERIODIC_LOCATION = "periodic_location_enabled"
+        private const val KEY_OFFLINE_AUTOLOCK = "opt_in_offline_autolock"
+        private const val KEY_REMOTE_WIPE = "opt_in_remote_wipe"
+        private const val KEY_SAFE_LAT = "safe_lat"
+        private const val KEY_SAFE_LNG = "safe_lng"
+        private const val KEY_SAFE_RADIUS = "safe_radius"
+        private const val KEY_SAFE_ENABLED = "safe_enabled"
     }
 }

@@ -43,6 +43,13 @@ class AlarmPlayer(private val context: Context) {
                     return
                 }
 
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            audioManager?.setStreamVolume(
+                AudioManager.STREAM_ALARM,
+                audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM),
+                0
+            )
+
             val player = MediaPlayer()
             player.setAudioAttributes(
                 AudioAttributes.Builder()

@@ -9,6 +9,7 @@ import mw.phoneguard.app.data.storage.TokenStore
 
 data class SettingsUiState(
     val videoEvidenceEnabled: Boolean = false,
+    val periodicLocationEnabled: Boolean = true,
     val offlineAutoLockEnabled: Boolean = false,
     val remoteWipeEnabled: Boolean = false
 )
@@ -19,6 +20,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _uiState = MutableStateFlow(
         SettingsUiState(
             videoEvidenceEnabled = tokenStore.isVideoEvidenceEnabled(),
+            periodicLocationEnabled = tokenStore.isPeriodicLocationEnabled(),
             offlineAutoLockEnabled = tokenStore.isOfflineAutoLockEnabled(),
             remoteWipeEnabled = tokenStore.isRemoteWipeEnabled()
         )
@@ -28,6 +30,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun toggleVideoEvidence(enabled: Boolean) {
         tokenStore.saveVideoEvidenceEnabled(enabled)
         _uiState.value = _uiState.value.copy(videoEvidenceEnabled = enabled)
+    }
+
+    fun togglePeriodicLocation(enabled: Boolean) {
+        tokenStore.savePeriodicLocationEnabled(enabled)
+        _uiState.value = _uiState.value.copy(periodicLocationEnabled = enabled)
     }
 
     fun toggleOfflineAutoLock(enabled: Boolean) {

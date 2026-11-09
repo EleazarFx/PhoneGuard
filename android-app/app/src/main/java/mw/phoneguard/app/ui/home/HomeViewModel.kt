@@ -32,7 +32,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             deviceRegistered = tokenStore.hasDeviceRegistered(),
             isAdminActive = checkAdminActive(),
             alertModeArmed = tokenStore.isAlertModeArmed(),
-            trustedContactsCount = 0,
+            trustedContactsCount = tokenStore.getTrustedContacts().size,
             unsyncedEventCount = 0
         )
     )
@@ -44,7 +44,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             database.eventDao().observeUnsyncedCount().collect { count ->
                 Log.d("HomeViewModel", "Unsynced count changed to: $count")
-                _uiState.value = _uiState.value.copy(unsyncedEventCount = count)
+                _uiState.value = _uiState.value.copy(
+                    unsyncedEventCount = count,
+                    trustedContactsCount = tokenStore.getTrustedContacts().size
+                )
             }
         }
     }
@@ -66,7 +69,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun refresh() {
         _uiState.value = _uiState.value.copy(
             userEmail = tokenStore.getUserEmail(),
-            deviceRegistered = tokenStore.hasDeviceRegistered()
+            deviceRegistered = tokenStore.hasDeviceRegistered(),
+            trustedContactsCount = tokenStore.getTrustedContacts().size
         )
     }
 

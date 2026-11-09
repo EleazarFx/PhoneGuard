@@ -16,14 +16,18 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import mw.phoneguard.app.MainActivity
 import mw.phoneguard.app.R
 import mw.phoneguard.app.data.local.EventEntity
 import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
+import mw.phoneguard.app.data.sync.SyncManager
 import android.app.KeyguardManager
 
 
@@ -31,12 +35,14 @@ class PhoneGuardService : Service() {
 
     private val TAG = "PhoneGuardService"
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var locationTickerJob: Job? = null
 
     private var alertModeManager: AlertModeManager? = null
 
     private var snatchGuard: SnatchGuard? = null
     private var simReceiver: BroadcastReceiver? = null
     private var screenStateReceiver: ScreenStateReceiver? = null
+    private var airplaneReceiver: BroadcastReceiver? = null
 
     companion object {
         private const val CHANNEL_ID = "phoneguard_service"
@@ -60,12 +66,37 @@ class PhoneGuardService : Service() {
 
         const val ACTION_START_ALERT_MODE = "mw.phoneguard.app.START_ALERT_MODE"
         const val ACTION_STOP_ALERT_MODE = "mw.phoneguard.app.STOP_ALERT_MODE"
+        const val ACTION_TRIGGER_DECOY = "mw.phoneguard.app.TRIGGER_DECOY"
+        const val ACTION_BOOT = "mw.phoneguard.app.BOOT"
+
+        fun startOnBoot(context: Context) {
+            val intent = Intent(context, PhoneGuardService::class.java).apply {
+                action = ACTION_BOOT
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                
+                context.startService(intent)
+            }
+        }
 
         fun setAlertMode(context: Context, armed: Boolean) {
             val intent = Intent(context, PhoneGuardService::class.java).apply {
                 action = if (armed) ACTION_START_ALERT_MODE else ACTION_STOP_ALERT_MODE
             }
             context.startService(intent)
+        }
+
+        fun triggerDecoy(context: Context) {
+            val intent = Intent(context, PhoneGuardService::class.java).apply {
+                action = ACTION_TRIGGER_DECOY
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
 
         const val ACTION_SCREEN_LOCKED = "mw.phoneguard.app.SCREEN_LOCKED"
@@ -87,8 +118,11 @@ class PhoneGuardService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         registerSimReceiver()
         registerScreenStateReceiver()
+        registerAirplaneModeReceiver()
         // Immediate SIM check on service creation (catches boot-time SIM swaps)
         handleSimState()
+        // Start 1-minute location broadcasting loop
+        startPeriodicLocationTicker()
 
         // Start motion detection only if alert mode is armed AND device/screen locked
         val tokenStore = TokenStore.get(applicationContext)
@@ -112,8 +146,17 @@ class PhoneGuardService : Service() {
         Log.i(TAG, "onStartCommand (action=${intent?.action})")
         startForeground(NOTIFICATION_ID, buildNotification())
         handleSimState()
+        startPeriodicLocationTicker()
 
         when (intent?.action) {
+            ACTION_BOOT -> {
+                Log.w(TAG, "!!! DEVICE BOOT / RESTART DETECTED !!!")
+                val tokenStore = TokenStore.get(applicationContext)
+                val deviceId = tokenStore.getDeviceId()
+                if (deviceId != null) {
+                    queueEvent(deviceId, "restart")
+                }
+            }
             ACTION_START_ALERT_MODE -> {
                 val tokenStore = TokenStore.get(applicationContext)
                 if (tokenStore.isAlertModeArmed()) {
@@ -159,9 +202,54 @@ class PhoneGuardService : Service() {
                 snatchGuard?.stop()
                 snatchGuard = null
             }
+
+            ACTION_TRIGGER_DECOY -> showDecoyFullScreen(applicationContext)
         }
 
         return START_STICKY
+    }
+
+    private fun showDecoyFullScreen(context: Context) {
+        try {
+            val channelId = "phoneguard_urgent"
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    channelId,
+                    "PhoneGuard Security Alerts",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Urgent security alerts and decoy lockouts"
+                    enableVibration(true)
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+
+            val decoyIntent = Intent(context, DecoyShutdownActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val fullScreenPendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                decoyIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.ic_lock_lock)
+                .setContentTitle("Security Warning")
+                .setContentText("Unauthorized threat detected. Securing device...")
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setFullScreenIntent(fullScreenPendingIntent, true)
+                .setAutoCancel(true)
+                .build()
+
+            notificationManager.notify(9999, notification)
+            Log.i(TAG, "Triggered full-screen decoy shutdown intent")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to trigger full-screen decoy: ${e.message}", e)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -173,6 +261,7 @@ class PhoneGuardService : Service() {
         stopAlertMode()
         unregisterSimReceiver()
         unregisterScreenStateReceiver()
+        unregisterAirplaneModeReceiver()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -292,6 +381,52 @@ class PhoneGuardService : Service() {
         }
     }
 
+    private fun registerAirplaneModeReceiver() {
+        if (airplaneReceiver != null) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_AIRPLANE_MODE_CHANGED) {
+                    val isAirplaneModeOn = intent.getBooleanExtra("state", false)
+                    Log.w(TAG, "Airplane mode changed: $isAirplaneModeOn")
+                    if (isAirplaneModeOn) {
+                        serviceScope.launch {
+                            val tokenStore = TokenStore.get(applicationContext)
+                            val deviceId = tokenStore.getDeviceId() ?: "unknown_device"
+                            val db = PhoneGuardDatabase.get(applicationContext)
+                            var event = EventEntity(
+                                deviceId = deviceId,
+                                type = "tamper",
+                                timestamp = System.currentTimeMillis(),
+                                captureStatus = "pending_capture"
+                            )
+                            event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
+                            db.eventDao().upsert(event)
+                            Log.i(TAG, "Logged airplane mode tamper event with evidence to Room")
+                        }
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(receiver, filter)
+        }
+        airplaneReceiver = receiver
+        Log.i(TAG, "Airplane mode receiver registered")
+    }
+
+    private fun unregisterAirplaneModeReceiver() {
+        airplaneReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: Exception) {}
+            airplaneReceiver = null
+        }
+    }
+
     private fun handleSimState() {
         val tokenStore = TokenStore.get(applicationContext)
         val deviceId = tokenStore.getDeviceId()
@@ -371,6 +506,9 @@ class PhoneGuardService : Service() {
 
         Log.w(TAG, "!!! FOREIGN SIM CHANGE DETECTED !!! (currentCodes=$currentCodes, originalCodes=$originalCodes)")
         queueEvent(deviceId, "sim_change")
+        SmsSender.sendAlertToTrustedContacts(applicationContext, "[PhoneGuard] ALERT: Unauthorized SIM card change detected on protected device!")
+        triggerDecoy(applicationContext)
+
         tokenStore.saveLastAlertedSimCodes(currentCodes)
         tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
     }
@@ -406,15 +544,16 @@ class PhoneGuardService : Service() {
         serviceScope.launch {
             try {
                 val db = PhoneGuardDatabase.get(applicationContext)
-                val event = EventEntity(
+                var event = EventEntity(
                     deviceId = deviceId,
                     type = type,
                     timestamp = System.currentTimeMillis(),
                     captureStatus = "pending_capture",
                     clientSeq = System.currentTimeMillis()
                 )
+                event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
                 db.eventDao().upsert(event)
-                Log.i(TAG, "$type event queued: ${event.id}")
+                Log.i(TAG, "$type event queued with evidence: ${event.id}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue $type event", e)
             }
@@ -458,15 +597,16 @@ class PhoneGuardService : Service() {
         serviceScope.launch {
             try {
                 val db = PhoneGuardDatabase.get(applicationContext)
-                val event = EventEntity(
+                var event = EventEntity(
                     deviceId = deviceId,
                     type = "snatch",
                     timestamp = System.currentTimeMillis(),
                     captureStatus = "pending_capture",
                     clientSeq = System.nanoTime()
                 )
+                event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
                 db.eventDao().upsert(event)
-                Log.i(TAG, "snatch event queued on motion: ${event.id}")
+                Log.i(TAG, "snatch event queued on motion with evidence: ${event.id}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue snatch event", e)
             }
@@ -475,6 +615,37 @@ class PhoneGuardService : Service() {
         // Activate SnatchGuard (plays alarm, starts grace period, locks if not unlocked)
         if (snatchGuard == null) {
             snatchGuard = SnatchGuard(applicationContext).also { it.start() }
+        }
+    }
+
+    private fun startPeriodicLocationTicker() {
+        if (locationTickerJob?.isActive == true) return
+        locationTickerJob = serviceScope.launch {
+            while (isActive) {
+                try {
+                    val tokenStore = TokenStore.get(applicationContext)
+                    if (tokenStore.isPeriodicLocationEnabled()) {
+                        val deviceId = tokenStore.getDeviceId()
+                        if (deviceId != null) {
+                            var event = EventEntity(
+                                deviceId = deviceId,
+                                type = "location_ping",
+                                timestamp = System.currentTimeMillis(),
+                                captureStatus = "periodic_broadcast",
+                                clientSeq = System.currentTimeMillis()
+                            )
+                            event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
+                            val db = PhoneGuardDatabase.get(applicationContext)
+                            db.eventDao().upsert(event)
+                            Log.i(TAG, "1-Min Periodic Location Ping: lat=${event.lat}, lng=${event.lng}")
+                            SyncManager(applicationContext).syncPendingEvents()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "1-Min Periodic Location Ping failed: ${e.message}")
+                }
+                delay(60_000L)
+            }
         }
     }
 

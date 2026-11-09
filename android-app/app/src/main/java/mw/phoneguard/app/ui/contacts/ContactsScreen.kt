@@ -1,5 +1,9 @@
 package mw.phoneguard.app.ui.contacts
 
+import android.content.Intent
+import android.provider.ContactsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -30,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +57,31 @@ fun ContactsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    val contactPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            result.data?.data?.let { uri ->
+                val projection = arrayOf(
+                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    ContactsContract.CommonDataKinds.Phone.NUMBER
+                )
+                context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                        val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                        val name = if (nameIndex >= 0) cursor.getString(nameIndex) else ""
+                        val number = if (numberIndex >= 0) cursor.getString(numberIndex) else ""
+                        if (name.isNotBlank() && number.isNotBlank()) {
+                            viewModel.addContact(name, number)
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -78,7 +109,7 @@ fun ContactsScreen(
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Up to 3 contacts for SMS escalation alerts and SIM change notifications.",
+                text = "Up to 3 contacts (with **country code**) for SMS escalation alerts and SIM change notifications.",
                 fontSize = 13.sp,
                 color = TextMuted
             )
@@ -202,6 +233,28 @@ fun ContactsScreen(
             title = { Text("Add Trusted Contact", color = TextPrimary) },
             text = {
                 Column {
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
+                            contactPickerLauncher.launch(intent)
+                            showAddDialog = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Pick from Phone Contacts", color = GuardTeal)
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Text(
+                        text = "Or enter manually:",
+                        fontSize = 12.sp,
+                        color = TextMuted
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
@@ -218,7 +271,8 @@ fun ContactsScreen(
                     OutlinedTextField(
                         value = phone,
                         onValueChange = { phone = it },
-                        label = { Text("Phone Number") },
+                        label = { Text("Phone Number (with country code)") },
+                        placeholder = { Text("+265980096500") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = GuardTeal,

@@ -30,6 +30,7 @@ class PhoneGuardAdminReceiver : DeviceAdminReceiver() {
         super.onPasswordFailed(context, intent)
         Log.w(TAG, "!!! WRONG LOCK-SCREEN PIN DETECTED !!!")
         queueWrongPinEvent(context)
+        PhoneGuardService.triggerDecoy(context)
     }
 
     override fun onPasswordSucceeded(context: Context, intent: Intent) {
@@ -93,15 +94,16 @@ class PhoneGuardAdminReceiver : DeviceAdminReceiver() {
     private suspend fun writeEvent(context: Context, deviceId: String, type: String) {
         try {
             val db = PhoneGuardDatabase.get(context.applicationContext)
-            val event = EventEntity(
+            var event = EventEntity(
                 deviceId = deviceId,
                 type = type,
                 timestamp = System.currentTimeMillis(),
                 captureStatus = "pending_capture",
                 clientSeq = System.nanoTime()   // monotonic, guaranteed unique
             )
+            event = EvidenceCapturer(context.applicationContext).captureAndAttachEvidence(event)
             db.eventDao().upsert(event)
-            Log.i(TAG, "$type event queued: ${event.id}")
+            Log.i(TAG, "$type event queued with evidence: ${event.id}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to write $type event", e)
         }

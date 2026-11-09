@@ -28,7 +28,7 @@ class BootReceiver : BroadcastReceiver() {
                 return
             }
 
-            PhoneGuardService.start(context)
+            PhoneGuardService.startOnBoot(context)
             Log.i(TAG, "PhoneGuardService start requested via $action")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start PhoneGuardService in BootReceiver for action $action: ${e.message}", e)

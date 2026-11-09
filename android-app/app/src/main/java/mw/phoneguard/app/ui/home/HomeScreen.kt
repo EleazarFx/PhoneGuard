@@ -56,6 +56,7 @@ fun HomeScreen(
     onToggleAlertMode: (Boolean) -> Unit,
     onEnableAdminClick: () -> Unit,
     onResetOriginalSim: () -> Unit,
+    onTestDecoyShutdown: () -> Unit,
     onLogout: () -> Unit,
     onNavigate: (mw.phoneguard.app.AppScreen) -> Unit,
     currentScreen: mw.phoneguard.app.AppScreen
@@ -289,6 +290,34 @@ fun HomeScreen(
                     }
                     Text(
                         "Reset",
+                        fontSize = 13.sp,
+                        color = GuardTeal,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
+                Spacer(Modifier.height(14.dp))
+
+                // Test Decoy Shutdown row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickableNoRipple { onTestDecoyShutdown() },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Test Decoy Shutdown", fontSize = 14.sp, color = TextMuted)
+                        Text(
+                            "Preview black screen & tampering log",
+                            fontSize = 11.sp,
+                            color = TextFaint
+                        )
+                    }
+                    Text(
+                        "Test",
                         fontSize = 13.sp,
                         color = GuardTeal,
                         fontWeight = FontWeight.SemiBold

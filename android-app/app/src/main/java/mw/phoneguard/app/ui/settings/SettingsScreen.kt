@@ -123,6 +123,41 @@ fun SettingsScreen(
                 HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
                 Spacer(Modifier.height(16.dp))
 
+                // Periodic Location Broadcast toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Text(
+                            "1-Minute Location Broadcast",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            "Broadcast GPS coordinates every minute (active post-shutdown recovery)",
+                            fontSize = 12.sp,
+                            color = TextMuted
+                        )
+                    }
+                    Switch(
+                        checked = state.periodicLocationEnabled,
+                        onCheckedChange = viewModel::togglePeriodicLocation,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = GuardTeal,
+                            checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = PanelDark
+                        )
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
+                Spacer(Modifier.height(16.dp))
+
                 // Offline Auto-Lock toggle
                 Row(
                     modifier = Modifier.fillMaxWidth(),

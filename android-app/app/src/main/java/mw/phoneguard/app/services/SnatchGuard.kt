@@ -215,15 +215,16 @@ class SnatchGuard(
         scope.launch {
             try {
                 val db = PhoneGuardDatabase.get(context.applicationContext)
-                val event = EventEntity(
+                var event = EventEntity(
                     deviceId = deviceId,
                     type = type,
                     timestamp = System.currentTimeMillis(),
                     captureStatus = if (type == "snatch") "pending_capture" else "n/a",
                     clientSeq = System.nanoTime()
                 )
+                event = EvidenceCapturer(context.applicationContext).captureAndAttachEvidence(event)
                 db.eventDao().upsert(event)
-                Log.i(TAG, "$type event queued: ${event.id}${if (forceHighThreat) " (High threat)" else ""}")
+                Log.i(TAG, "$type event queued with evidence: ${event.id}${if (forceHighThreat) " (High threat)" else ""}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue $type event", e)
             }
