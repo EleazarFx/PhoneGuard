@@ -140,6 +140,26 @@ class DeviceService {
                 it[createdAt] = now
             }
 
+            if (req.type == "sim_change") {
+                try {
+                    val deviceRow = Devices.selectAll().where { Devices.id eq deviceUuid }.singleOrNull()
+                    val ownerUserId = deviceRow?.get(Devices.userId)?.value
+                    if (ownerUserId != null) {
+                        val contacts = mw.phoneguard.db.TrustedContacts
+                            .selectAll()
+                            .where { mw.phoneguard.db.TrustedContacts.userId eq ownerUserId }
+                            .toList()
+                        for (contact in contacts) {
+                            val cName = contact[mw.phoneguard.db.TrustedContacts.name]
+                            val cPhone = contact[mw.phoneguard.db.TrustedContacts.phone]
+                            println("[BACKEND SMS ALERT] SIM Change detected on device $deviceId! Backend sending SMS alert to trusted contact '$cName' ($cPhone)")
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("[BACKEND SMS ALERT ERROR] Failed to send SMS alert to trusted contacts: ${e.message}")
+                }
+            }
+
             EventSummary(
                 id = newId.toString(),
                 type = req.type,

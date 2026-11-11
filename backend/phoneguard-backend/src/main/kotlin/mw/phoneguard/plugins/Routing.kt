@@ -10,12 +10,17 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.routing
+import mw.phoneguard.models.ContactDto
+import mw.phoneguard.models.CreateContactRequest
 import mw.phoneguard.models.ErrorResponse
 import mw.phoneguard.models.LoginRequest
 import mw.phoneguard.models.LoginResponse
 import mw.phoneguard.models.RegisterRequest
+import mw.phoneguard.services.ContactService
 import mw.phoneguard.services.JwtService
+import mw.phoneguard.services.SmsCommandService
 import mw.phoneguard.services.UserService
 
 import mw.phoneguard.models.HealthResponse
@@ -38,6 +43,7 @@ import mw.phoneguard.services.EmailService
 fun Application.configureRouting(jwtService: JwtService, emailService: EmailService) {
     val userService = UserService()
     val deviceService = DeviceService()
+    val contactService = ContactService()
     val resetService = PasswordResetService(emailService)
     
 
@@ -213,7 +219,52 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
                 call.respond(events)
             }
 
+            // List trusted contacts for user
+            get("/contacts") {
+                val principal = call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("userId").asString()
+                call.respond(contactService.listForUser(userId))
+            }
 
+            // Create trusted contact for user (max 3 per user)
+            post("/contacts") {
+                val principal = call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("userId").asString()
+                val req = call.receive<CreateContactRequest>()
+                val (contact, error) = contactService.createContact(userId, req)
+                if (contact == null) {
+                    call.respond(HttpStatusCode.BadRequest, ErrorResponse(error ?: "Failed to create contact"))
+                } else {
+                    call.respond(HttpStatusCode.Created, contact)
+                }
+            }
+
+            // Delete trusted contact for user
+            delete("/contacts/{id}") {
+                val principal = call.principal<JWTPrincipal>()!!
+                val userId = principal.payload.getClaim("userId").asString()
+                val contactId = call.parameters["id"]!!
+                val success = contactService.deleteContact(userId, contactId)
+                if (!success) {
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("Contact not found"))
+                } else {
+                    call.respond(HttpStatusCode.OK, mapOf("deleted" to true))
+                }
+            }
+        }
+
+        // Incoming SMS simulation / endpoint to test SMS command parsing
+        post("/sms/incoming") {
+            @kotlinx.serialization.Serializable
+            data class IncomingSmsRequest(val sender: String, val message: String)
+
+            val req = call.receive<IncomingSmsRequest>()
+            val result = SmsCommandService.processIncomingSms(req.sender, req.message, deviceService)
+            if (result.success) {
+                call.respond(HttpStatusCode.OK, result)
+            } else {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse(result.message))
+            }
         }
 
 

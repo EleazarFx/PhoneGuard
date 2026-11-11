@@ -6,13 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [EventEntity::class],
-    version = 1,
+    entities = [EventEntity::class, ContactEntity::class],
+    version = 2,
     exportSchema = false
 )
 abstract class PhoneGuardDatabase : RoomDatabase() {
 
     abstract fun eventDao(): EventDao
+    abstract fun contactDao(): ContactDao
 
     companion object {
         @Volatile
@@ -24,7 +25,9 @@ abstract class PhoneGuardDatabase : RoomDatabase() {
                     context.applicationContext,
                     PhoneGuardDatabase::class.java,
                     "phoneguard.db"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }

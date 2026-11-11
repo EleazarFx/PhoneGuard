@@ -13,7 +13,7 @@ class SyncManager(context: Context) {
 
     private val db = PhoneGuardDatabase.get(context.applicationContext)
     private val tokenStore = TokenStore.get(context.applicationContext)
-    private val deviceApi = DeviceApi()
+    private val deviceApi = DeviceApi(context.applicationContext)
     private val TAG = "PhoneGuardSync"
 
     /**

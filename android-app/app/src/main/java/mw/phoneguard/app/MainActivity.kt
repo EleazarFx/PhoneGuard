@@ -63,6 +63,19 @@ class MainActivity : ComponentActivity() {
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
+        // Ask for camera permission for evidence capture
+        val cameraLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            if (!granted) {
+                android.util.Log.w(
+                    "PhoneGuard",
+                    "CAMERA permission denied — stealth photo evidence capture will be blocked"
+                )
+            }
+        }
+        cameraLauncher.launch(Manifest.permission.CAMERA)
+
         setContent {
             PhoneGuardTheme {
                 PhoneGuardApp(authViewModel, homeViewModel)
@@ -78,11 +91,6 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
 
     var showRegister by remember { mutableStateOf(false) }
     var currentScreen by remember { mutableStateOf(AppScreen.Home) }
-
-    // ActivityViewModel needs a Context and is only used when logged in
-    val activityViewModel: ActivityViewModel? = if (state.isLoggedIn) {
-        viewModel()
-    } else null
 
     when {
         state.isLoggedIn -> {
@@ -134,13 +142,16 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
                     },
                     onLogout = { authViewModel.logout() },
                     onNavigate = { currentScreen = it },
-                    currentScreen = currentScreen
+                    currentScreen = currentScreen,
+                    onRefresh = {
+                        homeViewModel.refresh()
+                        homeViewModel.refreshAdminState()
+                        homeViewModel.triggerSync()
+                    }
                 )
 
                 AppScreen.Activity -> {
-                    val events by activityViewModel!!.events.collectAsState()
                     ActivityScreen(
-                        events = events,
                         currentScreen = currentScreen,
                         onNavigate = { currentScreen = it }
                     )
@@ -156,7 +167,8 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
                 AppScreen.Settings -> {
                     SettingsScreen(
                         currentScreen = currentScreen,
-                        onNavigate = { currentScreen = it }
+                        onNavigate = { currentScreen = it },
+                        onLogout = { authViewModel.logout() }
                     )
                 }
             }

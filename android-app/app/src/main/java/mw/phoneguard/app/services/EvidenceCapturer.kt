@@ -4,21 +4,26 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
-import android.graphics.PointF
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraDevice
-import android.hardware.camera2.CameraManager
-import android.hardware.camera2.CaptureRequest
+import android.graphics.Matrix
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import android.media.FaceDetector
-import android.media.ImageReader
 import android.os.BatteryManager
 import android.os.Handler
-import android.os.HandlerThread
+import android.os.Looper
 import android.util.Log
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetectorOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -27,6 +32,7 @@ import mw.phoneguard.app.data.storage.TokenStore
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 class EvidenceCapturer(private val context: Context) {
@@ -46,23 +52,35 @@ class EvidenceCapturer(private val context: Context) {
         // 2. Capture Battery Level
         val battery = fetchBattery(appContext)
 
-        // 3. Capture Photo Evidence & Face Detection / Cropping
+        // 3. Capture Photo Evidence & ML Kit Face Detection / Cropping using CameraX
         var captureStatus = "pending_capture"
         var photoSha256: String? = null
 
         try {
-            val photoResult = capturePhotoWithCamera2(appContext)
-            if (photoResult != null) {
-                val (bitmap, lensFacing) = photoResult
-                val processed = detectFaceAndCrop(appContext, bitmap, lensFacing)
+            val capturesDir = File(appContext.filesDir, "captures")
+            if (!capturesDir.exists()) {
+                capturesDir.mkdirs()
+            }
+            val photoFile = File(capturesDir, "${event.id}.jpg")
+
+            val captureResult = capturePhotoWithCameraX(appContext, photoFile)
+            if (captureResult != null) {
+                val (bitmap, lensFacing) = captureResult
+                val processed = detectFaceAndCropAndSave(appContext, bitmap, lensFacing, photoFile)
                 captureStatus = processed.first
                 photoSha256 = processed.second
             } else {
                 captureStatus = "camera_blocked"
             }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Camera permission denied or blocked: ${e.message}")
+            captureStatus = "camera_blocked"
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "Camera deferred due to background/service state: ${e.message}")
+            captureStatus = "deferred"
         } catch (e: Exception) {
             Log.e(TAG, "Failed to capture photo evidence: ${e.message}", e)
-            captureStatus = "error"
+            captureStatus = "camera_blocked"
         }
 
         // 4. Optional Video Evidence
@@ -90,10 +108,11 @@ class EvidenceCapturer(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private suspend fun fetchLocation(context: Context): Location? = suspendCancellableCoroutine { continuation ->
+        val resumed = AtomicBoolean(false)
         try {
             val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             if (locationManager == null) {
-                continuation.resume(null)
+                if (resumed.compareAndSet(false, true)) continuation.resume(null)
                 return@suspendCancellableCoroutine
             }
 
@@ -107,13 +126,12 @@ class EvidenceCapturer(private val context: Context) {
             }
 
             if (bestLoc != null) {
-                continuation.resume(bestLoc)
+                if (resumed.compareAndSet(false, true)) continuation.resume(bestLoc)
             } else {
-                // Request a single quick location update
                 val listener = object : LocationListener {
                     override fun onLocationChanged(location: Location) {
                         try { locationManager.removeUpdates(this) } catch (_: Exception) {}
-                        if (continuation.isActive) continuation.resume(location)
+                        if (resumed.compareAndSet(false, true)) continuation.resume(location)
                     }
                     @Deprecated("Deprecated in Java")
                     override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
@@ -121,14 +139,13 @@ class EvidenceCapturer(private val context: Context) {
                 val provider = if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) LocationManager.GPS_PROVIDER else LocationManager.NETWORK_PROVIDER
                 locationManager.requestSingleUpdate(provider, listener, context.mainLooper)
 
-                // Timeout safety
                 Handler(context.mainLooper).postDelayed({
                     try { locationManager.removeUpdates(listener) } catch (_: Exception) {}
-                    if (continuation.isActive) continuation.resume(null)
+                    if (resumed.compareAndSet(false, true)) continuation.resume(null)
                 }, 4000L)
             }
         } catch (e: Exception) {
-            if (continuation.isActive) continuation.resume(null)
+            if (resumed.compareAndSet(false, true)) continuation.resume(null)
         }
     }
 
@@ -146,159 +163,251 @@ class EvidenceCapturer(private val context: Context) {
     }
 
     // ─────────────────────────────────────────────────────────
-    // Camera2 Stealth Capture (Front / Back fallback)
+    // CameraX Stealth Capture (Front / Back fallback)
     // ─────────────────────────────────────────────────────────
 
-    @SuppressLint("MissingPermission")
-    private suspend fun capturePhotoWithCamera2(context: Context): Pair<Bitmap, Int>? = suspendCancellableCoroutine { continuation ->
-        try {
-            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
-            if (cameraManager == null) {
-                continuation.resume(null)
-                return@suspendCancellableCoroutine
-            }
-
-            var selectedCameraId: String? = null
-            var lensFacing = CameraCharacteristics.LENS_FACING_FRONT
-
-            for (id in cameraManager.cameraIdList) {
-                val chars = cameraManager.getCameraCharacteristics(id)
-                val facing = chars.get(CameraCharacteristics.LENS_FACING)
-                if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
-                    selectedCameraId = id
-                    lensFacing = CameraCharacteristics.LENS_FACING_FRONT
-                    break
-                }
-            }
-
-            // Back camera fallback
-            if (selectedCameraId == null && cameraManager.cameraIdList.isNotEmpty()) {
-                selectedCameraId = cameraManager.cameraIdList[0]
-                lensFacing = CameraCharacteristics.LENS_FACING_BACK
-            }
-
-            if (selectedCameraId == null) {
-                continuation.resume(null)
-                return@suspendCancellableCoroutine
-            }
-
-            val thread = HandlerThread("Camera2Background").apply { start() }
-            val handler = Handler(thread.looper)
-
-            val imageReader = ImageReader.newInstance(1280, 720, ImageFormat.JPEG, 2)
-            imageReader.setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage()
-                if (image != null) {
-                    try {
-                        val buffer = image.planes[0].buffer
-                        val bytes = ByteArray(buffer.remaining())
-                        buffer.get(bytes)
-                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        image.close()
-                        thread.quitSafely()
-                        if (continuation.isActive) continuation.resume(Pair(bitmap, lensFacing))
-                    } catch (e: Exception) {
-                        image.close()
-                        thread.quitSafely()
-                        if (continuation.isActive) continuation.resume(null)
-                    }
-                }
-            }, handler)
-
-            cameraManager.openCamera(selectedCameraId, object : CameraDevice.StateCallback() {
-                override fun onOpened(camera: CameraDevice) {
-                    try {
-                        val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
-                            addTarget(imageReader.surface)
-                            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                        }
-                        @Suppress("DEPRECATION")
-                        camera.createCaptureSession(listOf(imageReader.surface), object : android.hardware.camera2.CameraCaptureSession.StateCallback() {
-                            override fun onConfigured(session: android.hardware.camera2.CameraCaptureSession) {
-                                try {
-                                    session.capture(captureBuilder.build(), null, handler)
-                                } catch (e: Exception) {
-                                    camera.close()
-                                    thread.quitSafely()
-                                    if (continuation.isActive) continuation.resume(null)
-                                }
-                            }
-                            override fun onConfigureFailed(session: android.hardware.camera2.CameraCaptureSession) {
-                                camera.close()
-                                thread.quitSafely()
-                                if (continuation.isActive) continuation.resume(null)
-                            }
-                        }, handler)
-                    } catch (e: Exception) {
-                        camera.close()
-                        thread.quitSafely()
-                        if (continuation.isActive) continuation.resume(null)
-                    }
-                }
-
-                override fun onDisconnected(camera: CameraDevice) {
-                    camera.close()
-                    thread.quitSafely()
-                    if (continuation.isActive) continuation.resume(null)
-                }
-
-                override fun onError(camera: CameraDevice, error: Int) {
-                    camera.close()
-                    thread.quitSafely()
-                    if (continuation.isActive) continuation.resume(null)
-                }
-            }, handler)
-
-        } catch (e: Exception) {
-            if (continuation.isActive) continuation.resume(null)
+    private class ServiceLifecycleOwner : LifecycleOwner {
+        private val lifecycleRegistry = LifecycleRegistry(this)
+        init {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        }
+        override val lifecycle: Lifecycle get() = lifecycleRegistry
+        fun destroy() {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         }
     }
 
-    // ─────────────────────────────────────────────────────────
-    // Face Detection & Cropping (Native FaceDetector API)
-    // ─────────────────────────────────────────────────────────
+    private suspend fun capturePhotoWithCameraX(context: Context, outputFile: File): Pair<Bitmap, Int>? = withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine { continuation ->
+            val resumed = AtomicBoolean(false)
+            try {
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+                cameraProviderFuture.addListener({
+                    try {
+                        val cameraProvider = cameraProviderFuture.get()
+                        val lifecycleOwner = ServiceLifecycleOwner()
 
-    private fun detectFaceAndCrop(context: Context, bitmap: Bitmap, lensFacing: Int): Pair<String, String?> {
-        return try {
-            // Convert Bitmap to RGB_565 required by android.media.FaceDetector
-            val rgb565Bitmap = bitmap.copy(Bitmap.Config.RGB_565, true)
-            val detector = FaceDetector(rgb565Bitmap.width, rgb565Bitmap.height, 1)
-            val faces = Array<FaceDetector.Face?>(1) { null }
-            val numFaces = detector.findFaces(rgb565Bitmap, faces)
+                        val frontSelector = CameraSelector.Builder()
+                            .requireLensFacing(CameraSelector.LENS_FACING_FRONT)
+                            .build()
 
-            var finalBitmap = bitmap
-            var captureStatus = "captured"
+                        val imageCapture = ImageCapture.Builder()
+                            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                            .build()
 
-            if (numFaces > 0 && faces[0] != null) {
-                val face = faces[0]!!
-                val midPoint = PointF()
-                face.getMidPoint(midPoint)
-                val eyesDistance = face.eyesDistance()
+                        val hasFront = cameraProvider.hasCamera(frontSelector)
+                        val cameraSelector = if (hasFront) frontSelector else CameraSelector.DEFAULT_BACK_CAMERA
+                        val lensFacing = if (hasFront) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
 
-                val left = maxOf(0, (midPoint.x - eyesDistance * 1.5f).toInt())
-                val top = maxOf(0, (midPoint.y - eyesDistance * 1.5f).toInt())
-                val right = minOf(bitmap.width, (midPoint.x + eyesDistance * 1.5f).toInt())
-                val bottom = minOf(bitmap.height, (midPoint.y + eyesDistance * 1.8f).toInt())
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, imageCapture)
 
-                if (right > left && bottom > top) {
-                    finalBitmap = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+                        imageCapture.takePicture(
+                            ContextCompat.getMainExecutor(context),
+                            object : ImageCapture.OnImageCapturedCallback() {
+                                override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                                    try {
+                                        val bitmap = imageProxyToBitmap(imageProxy)
+                                        imageProxy.close()
+                                        cameraProvider.unbindAll()
+                                        lifecycleOwner.destroy()
+                                        if (resumed.compareAndSet(false, true)) {
+                                            continuation.resume(Pair(bitmap, lensFacing))
+                                        }
+                                    } catch (e: Exception) {
+                                        imageProxy.close()
+                                        cameraProvider.unbindAll()
+                                        lifecycleOwner.destroy()
+                                        if (resumed.compareAndSet(false, true)) {
+                                            continuation.resume(null)
+                                        }
+                                    }
+                                }
+
+                                override fun onError(exception: ImageCaptureException) {
+                                    Log.e(TAG, "CameraX capture error: ${exception.message}", exception)
+                                    cameraProvider.unbindAll()
+                                    lifecycleOwner.destroy()
+                                    if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                                        tryBackCameraFallback(context, cameraProvider, outputFile, continuation, resumed)
+                                    } else {
+                                        if (resumed.compareAndSet(false, true)) {
+                                            continuation.resume(null)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "CameraX initialization error: ${e.message}", e)
+                        if (resumed.compareAndSet(false, true)) {
+                            continuation.resume(null)
+                        }
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            } catch (e: Exception) {
+                Log.e(TAG, "CameraX outer error: ${e.message}", e)
+                if (resumed.compareAndSet(false, true)) {
+                    continuation.resume(null)
                 }
-                captureStatus = if (lensFacing == CameraCharacteristics.LENS_FACING_FRONT) "captured" else "back_fallback"
-            } else {
-                captureStatus = "no_face"
             }
+        }
+    }
 
-            val file = File(context.filesDir, "captures_${System.currentTimeMillis()}.jpg")
-            val out = FileOutputStream(file)
-            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+    private fun tryBackCameraFallback(
+        context: Context,
+        cameraProvider: ProcessCameraProvider,
+        outputFile: File,
+        continuation: kotlin.coroutines.Continuation<Pair<Bitmap, Int>?>,
+        resumed: AtomicBoolean
+    ) {
+        try {
+            val lifecycleOwner = ServiceLifecycleOwner()
+            val backSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            val imageCapture = ImageCapture.Builder().build()
+
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(lifecycleOwner, backSelector, imageCapture)
+
+            imageCapture.takePicture(
+                ContextCompat.getMainExecutor(context),
+                object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                        try {
+                            val bitmap = imageProxyToBitmap(imageProxy)
+                            imageProxy.close()
+                            cameraProvider.unbindAll()
+                            lifecycleOwner.destroy()
+                            if (resumed.compareAndSet(false, true)) {
+                                continuation.resume(Pair(bitmap, CameraSelector.LENS_FACING_BACK))
+                            }
+                        } catch (e: Exception) {
+                            imageProxy.close()
+                            cameraProvider.unbindAll()
+                            lifecycleOwner.destroy()
+                            if (resumed.compareAndSet(false, true)) {
+                                continuation.resume(null)
+                            }
+                        }
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        cameraProvider.unbindAll()
+                        lifecycleOwner.destroy()
+                        if (resumed.compareAndSet(false, true)) {
+                            continuation.resume(null)
+                        }
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            if (resumed.compareAndSet(false, true)) {
+                continuation.resume(null)
+            }
+        }
+    }
+
+    private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap {
+        val buffer = imageProxy.planes[0].buffer
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+        var bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        val rotation = imageProxy.imageInfo.rotationDegrees
+        if (rotation != 0) {
+            val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        }
+        return bitmap
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // ML Kit Face Detection & Cropping
+    // ─────────────────────────────────────────────────────────
+
+    private suspend fun detectFaceAndCropAndSave(
+        context: Context,
+        bitmap: Bitmap,
+        lensFacing: Int,
+        outputFile: File
+    ): Pair<String, String?> = suspendCancellableCoroutine { continuation ->
+        val resumed = AtomicBoolean(false)
+        try {
+            val options = FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+                .build()
+
+            val detector = FaceDetection.getClient(options)
+            val image = InputImage.fromBitmap(bitmap, 0)
+
+            detector.process(image)
+                .addOnSuccessListener { faces ->
+                    try {
+                        var finalBitmap = bitmap
+                        var captureStatus = if (lensFacing == CameraSelector.LENS_FACING_FRONT) "captured" else "back_fallback"
+
+                        if (faces.isNotEmpty()) {
+                            val face = faces[0]
+                            val bounds = face.boundingBox
+
+                            val left = maxOf(0, bounds.left - (bounds.width() * 0.3f).toInt())
+                            val top = maxOf(0, bounds.top - (bounds.height() * 0.3f).toInt())
+                            val right = minOf(bitmap.width, bounds.right + (bounds.width() * 0.3f).toInt())
+                            val bottom = minOf(bitmap.height, bounds.bottom + (bounds.height() * 0.3f).toInt())
+
+                            if (right > left && bottom > top) {
+                                finalBitmap = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+                            }
+                        } else {
+                            captureStatus = "no_face"
+                        }
+
+                        val out = FileOutputStream(outputFile)
+                        finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                        out.flush()
+                        out.close()
+
+                        val sha256 = computeSha256(outputFile)
+                        if (resumed.compareAndSet(false, true)) {
+                            continuation.resume(Pair(captureStatus, sha256))
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing face crop: ${e.message}", e)
+                        saveBitmapFallback(bitmap, outputFile, "captured", continuation, resumed)
+                    }
+                }
+                .addOnFailureListener { e ->
+                    Log.w(TAG, "ML Kit face detection failed: ${e.message}")
+                    saveBitmapFallback(bitmap, outputFile, "no_face", continuation, resumed)
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Face detection init error: ${e.message}", e)
+            saveBitmapFallback(bitmap, outputFile, "captured", continuation, resumed)
+        }
+    }
+
+    private fun saveBitmapFallback(
+        bitmap: Bitmap,
+        outputFile: File,
+        status: String,
+        continuation: kotlin.coroutines.Continuation<Pair<String, String?>>,
+        resumed: AtomicBoolean
+    ) {
+        try {
+            val out = FileOutputStream(outputFile)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
             out.flush()
             out.close()
-
-            val sha256 = computeSha256(file)
-            Pair(captureStatus, sha256)
+            val sha256 = computeSha256(outputFile)
+            if (resumed.compareAndSet(false, true)) {
+                continuation.resume(Pair(status, sha256))
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Face detection error: ${e.message}", e)
-            Pair("captured", null)
+            if (resumed.compareAndSet(false, true)) {
+                continuation.resume(Pair(status, null))
+            }
         }
     }
 

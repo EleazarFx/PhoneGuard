@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -26,11 +26,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,7 +42,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import mw.phoneguard.app.AppScreen
+import mw.phoneguard.app.data.local.ContactEntity
 import mw.phoneguard.app.ui.theme.GuardTeal
 import mw.phoneguard.app.ui.theme.LineColor
 import mw.phoneguard.app.ui.theme.PanelDark
@@ -57,6 +61,7 @@ fun ContactsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
+    var contactToDelete by remember { mutableStateOf<ContactEntity?>(null) }
     val context = LocalContext.current
 
     val contactPickerLauncher = rememberLauncherForActivityResult(
@@ -94,12 +99,23 @@ fun ContactsScreen(
                 .fillMaxWidth()
                 .padding(24.dp)
         ) {
-            Text(
-                text = "TRUSTED CONTACTS",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = TextFaint
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "TRUSTED CONTACTS",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextFaint
+                )
+                Text(
+                    text = "Synced: ${state.lastSyncedText}",
+                    fontSize = 11.sp,
+                    color = if (state.isOffline) WarnAmber else TextMuted
+                )
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "Emergency Contacts",
@@ -109,104 +125,119 @@ fun ContactsScreen(
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Up to 3 contacts (with **country code**) for SMS escalation alerts and SIM change notifications.",
+                text = "Up to 3 contacts (with country code) for SMS escalation alerts and SIM change notifications.",
                 fontSize = 13.sp,
                 color = TextMuted
             )
         }
 
         // List content
-        Column(
+        var isRefreshing by remember { mutableStateOf(false) }
+        val coroutineScope = rememberCoroutineScope()
+
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                coroutineScope.launch {
+                    isRefreshing = true
+                    viewModel.refresh()
+                    kotlinx.coroutines.delay(800)
+                    isRefreshing = false
+                }
+            },
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
         ) {
-            if (state.contacts.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "No trusted contacts added yet",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextMuted
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "Add up to 3 contacts to receive alert messages.",
-                            fontSize = 12.sp,
-                            color = TextFaint
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    itemsIndexed(state.contacts) { index, contact ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(PanelDark)
-                                .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp)
+            ) {
+                if (state.contacts.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(16.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = contact.first,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = TextPrimary
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    text = contact.second,
-                                    fontSize = 13.sp,
-                                    color = TextMuted
-                                )
-                            }
-                            TextButton(onClick = { viewModel.removeContact(index) }) {
-                                Text("Remove", color = WarnAmber, fontSize = 13.sp)
+                            Text(
+                                text = "No trusted contacts. Add 1-3 people who will receive SMS alerts if your SIM changes.",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextMuted,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(state.contacts, key = { it.id }) { contact ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(PanelDark)
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = contact.name,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TextPrimary
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        text = contact.phone,
+                                        fontSize = 13.sp,
+                                        color = TextMuted
+                                    )
+                                }
+                                TextButton(onClick = { contactToDelete = contact }) {
+                                    Text("Remove", color = WarnAmber, fontSize = 13.sp)
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
 
-            if (state.contacts.size < 3) {
-                Button(
-                    onClick = { showAddDialog = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = GuardTeal)
-                ) {
-                    Text(
-                        text = "Add Trusted Contact",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.background
-                    )
+                if (state.contacts.size < 3) {
+                    Button(
+                        onClick = { showAddDialog = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = GuardTeal)
+                    ) {
+                        Text(
+                            text = "Add Trusted Contact (${state.contacts.size}/3)",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.background
+                        )
+                    }
                 }
-            }
 
-            state.errorMessage?.let { error ->
-                Spacer(Modifier.height(8.dp))
-                Text(text = error, color = WarnAmber, fontSize = 12.sp)
-            }
+                state.errorMessage?.let { error ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(text = error, color = WarnAmber, fontSize = 12.sp)
+                }
 
-            Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(16.dp))
+            }
         }
 
         // Bottom nav
@@ -295,6 +326,30 @@ fun ContactsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showAddDialog = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = PanelDark
+        )
+    }
+
+    contactToDelete?.let { contact ->
+        AlertDialog(
+            onDismissRequest = { contactToDelete = null },
+            title = { Text("Remove Contact", color = TextPrimary) },
+            text = { Text("Are you sure you want to remove ${contact.name} from your trusted contacts?", color = TextMuted) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.removeContact(contact.id)
+                        contactToDelete = null
+                    }
+                ) {
+                    Text("Remove", color = WarnAmber)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { contactToDelete = null }) {
                     Text("Cancel", color = TextMuted)
                 }
             },

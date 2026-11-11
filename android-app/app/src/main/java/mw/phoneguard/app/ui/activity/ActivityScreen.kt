@@ -6,58 +6,86 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 import mw.phoneguard.app.AppScreen
 import mw.phoneguard.app.data.local.EventEntity
 import mw.phoneguard.app.ui.theme.*
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 @Composable
 fun ActivityScreen(
-    events: List<EventEntity>,
     currentScreen: AppScreen,
-    onNavigate: (AppScreen) -> Unit
+    onNavigate: (AppScreen) -> Unit,
+    viewModel: ActivityViewModel = viewModel()
 ) {
+    val events by viewModel.events.collectAsState()
+    var isRefreshing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Header
-        Column(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                coroutineScope.launch {
+                    isRefreshing = true
+                    viewModel.refresh()
+                    kotlinx.coroutines.delay(800)
+                    isRefreshing = false
+                }
+            },
             modifier = Modifier
                 .weight(1f)
-                .padding(20.dp)
+                .fillMaxWidth()
         ) {
-            Text(
-                "Activity Log",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Chronological theft and tamper events",
-                fontSize = 13.sp,
-                color = TextMuted
-            )
-            Spacer(Modifier.height(20.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    "Activity Log",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Chronological theft and tamper events",
+                    fontSize = 13.sp,
+                    color = TextMuted
+                )
+                Spacer(Modifier.height(20.dp))
 
-            if (events.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No events yet", color = TextMuted)
-                }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(events) { event ->
-                        EventCard(event)
+                if (events.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No events yet", color = TextMuted)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(events) { event ->
+                            EventCard(event)
+                        }
                     }
                 }
             }
@@ -81,6 +109,7 @@ fun ActivityScreen(
 
 @Composable
 private fun EventCard(event: EventEntity) {
+    val context = LocalContext.current
     val dateFormat = SimpleDateFormat("MMM dd, yyyy · HH:mm:ss", Locale.getDefault())
     val timeString = dateFormat.format(Date(event.timestamp))
 
@@ -88,6 +117,10 @@ private fun EventCard(event: EventEntity) {
         "sim_change", "snatch", "tamper" -> AlertRed
         "wrong_pin" -> WarnAmber
         else -> GuardTeal
+    }
+
+    val photoFile = remember(event.id) {
+        File(context.filesDir, "captures/${event.id}.jpg").takeIf { it.exists() }
     }
 
     Column(
@@ -133,6 +166,17 @@ private fun EventCard(event: EventEntity) {
             if (event.captureStatus != null) {
                 Text("Capture: ${event.captureStatus}", fontSize = 12.sp, color = TextMuted)
             }
+        }
+
+        if (photoFile != null) {
+            Spacer(Modifier.height(12.dp))
+            AsyncImage(
+                model = photoFile,
+                contentDescription = "Evidence Thumbnail",
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(RoundedCornerShape(8.dp))
+            )
         }
     }
 }

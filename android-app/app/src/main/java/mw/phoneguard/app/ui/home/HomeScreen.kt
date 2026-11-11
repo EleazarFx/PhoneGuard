@@ -24,8 +24,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import mw.phoneguard.app.ui.theme.GuardTeal
 import mw.phoneguard.app.ui.theme.LineColor
 import mw.phoneguard.app.ui.theme.PanelDark
@@ -59,23 +65,40 @@ fun HomeScreen(
     onTestDecoyShutdown: () -> Unit,
     onLogout: () -> Unit,
     onNavigate: (mw.phoneguard.app.AppScreen) -> Unit,
-    currentScreen: mw.phoneguard.app.AppScreen
+    currentScreen: mw.phoneguard.app.AppScreen,
+    onRefresh: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    var isRefreshing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
         // ---- Top content ----
-        Column(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                coroutineScope.launch {
+                    isRefreshing = true
+                    onRefresh()
+                    kotlinx.coroutines.delay(800)
+                    isRefreshing = false
+                }
+            },
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
             Spacer(Modifier.height(16.dp))
 
             // Guardian status ring
@@ -348,6 +371,7 @@ fun HomeScreen(
             ) {
                 Text("Log out", fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
+        }
         }
 
         // ---- Bottom nav ----

@@ -103,17 +103,28 @@ class PhoneGuardService : Service() {
         const val ACTION_SCREEN_UNLOCKED = "mw.phoneguard.app.SCREEN_UNLOCKED"
         const val ACTION_NOT_UNLOCKED = "mw.phoneguard.app.NOT_UNLOCKED"
         const val ACTION_UNLOCKED = "mw.phoneguard.app.UNLOCKED"
+        const val ACTION_FORCE_SIM_CHECK = "mw.phoneguard.app.FORCE_SIM_CHECK"
+        const val ACTION_FORCE_WRONG_PIN = "mw.phoneguard.app.FORCE_WRONG_PIN"
 
+        fun forceSimCheck(context: Context) {
+            val intent = Intent(context, PhoneGuardService::class.java).apply {
+                action = ACTION_FORCE_SIM_CHECK
+            }
+            context.startService(intent)
+        }
 
-
-
-
-
+        fun forceWrongPinTrigger(context: Context) {
+            val intent = Intent(context, PhoneGuardService::class.java).apply {
+                action = ACTION_FORCE_WRONG_PIN
+            }
+            context.startService(intent)
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "Service onCreate — starting foreground")
+        ServiceLogger.log(TAG, "Service onCreate — starting foreground")
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         registerSimReceiver()
@@ -140,17 +151,21 @@ class PhoneGuardService : Service() {
             stopAlertMode()
         }
 
+        updateCommandPollSchedule()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand (action=${intent?.action})")
+        ServiceLogger.log(TAG, "onStartCommand (action=${intent?.action})")
         startForeground(NOTIFICATION_ID, buildNotification())
         handleSimState()
         startPeriodicLocationTicker()
+        updateCommandPollSchedule()
 
         when (intent?.action) {
             ACTION_BOOT -> {
                 Log.w(TAG, "!!! DEVICE BOOT / RESTART DETECTED !!!")
+                ServiceLogger.log(TAG, "DEVICE BOOT / RESTART DETECTED")
                 val tokenStore = TokenStore.get(applicationContext)
                 val deviceId = tokenStore.getDeviceId()
                 if (deviceId != null) {
@@ -173,9 +188,21 @@ class PhoneGuardService : Service() {
             }
             ACTION_STOP_ALERT_MODE -> stopAlertMode()
 
+            ACTION_FORCE_SIM_CHECK -> {
+                Log.i(TAG, "Force SIM check triggered")
+                ServiceLogger.log(TAG, "Force SIM check executed")
+                handleSimState()
+            }
+
+            ACTION_FORCE_WRONG_PIN -> {
+                Log.w(TAG, "Force wrong-PIN trigger executed")
+                ServiceLogger.log(TAG, "Force wrong-PIN trigger executed")
+                val tokenStore = TokenStore.get(applicationContext)
+                val deviceId = tokenStore.getDeviceId() ?: "debug_device"
+                queueEvent(deviceId, "wrong_pin")
+            }
+
             ACTION_NOT_UNLOCKED -> {
-                // Phone is NOT unlocked (screen off, or screen on but locked)
-                // → ensure motion sensor is on if actually locked
                 val tokenStore = TokenStore.get(applicationContext)
                 if (tokenStore.isAlertModeArmed()) {
                     val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
@@ -193,8 +220,6 @@ class PhoneGuardService : Service() {
             }
 
             ACTION_UNLOCKED -> {
-                // Phone is unlocked → owner is present → stop motion sensor
-                // Also cancel any active SnatchGuard (owner proved identity)
                 if (alertModeManager != null) {
                     Log.i(TAG, "Phone unlocked — stopping motion detection")
                     stopAlertMode()
@@ -668,16 +693,16 @@ class PhoneGuardService : Service() {
         manager.notify(NOTIFICATION_ID, buildNotification())
     }
 
-
-
-    // (removed redundant runtime receiver code, using ScreenStateReceiver instead)
-
-
-
-
-
-
-
-
-
+    private fun updateCommandPollSchedule() {
+        val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
+        val isLocked = keyguardManager?.isDeviceLocked == true || keyguardManager?.isKeyguardLocked == true
+        if (isLocked) {
+            Log.i(TAG, "Device is locked — scheduling 60s command polling")
+            CommandPollWorker.schedule60sPoll(applicationContext)
+        } else {
+            Log.i(TAG, "Device is unlocked/active — scheduling 15-minute command polling")
+            CommandPollWorker.cancel60sPoll(applicationContext)
+            CommandPollWorker.schedulePeriodicPoll(applicationContext)
+        }
+    }
 }

@@ -179,6 +179,42 @@ class TokenStore private constructor(context: Context) {
     fun getSafeLng(): Double = prefs.getFloat(KEY_SAFE_LNG, 0f).toDouble()
     fun getSafeRadius(): Float = prefs.getFloat(KEY_SAFE_RADIUS, 100f)
 
+    fun isEscalationSmsEnabled(): Boolean = prefs.getBoolean(KEY_ESCALATION_SMS, false)
+    fun saveEscalationSmsEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_ESCALATION_SMS, enabled).apply()
+
+    fun isSilenceEmailEnabled(): Boolean = prefs.getBoolean(KEY_SILENCE_EMAIL, false)
+    fun saveSilenceEmailEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_SILENCE_EMAIL, enabled).apply()
+
+    fun getImei(): String? = prefs.getString(KEY_DEVICE_IMEI, null)
+    fun saveImei(imei: String) = prefs.edit().putString(KEY_DEVICE_IMEI, imei).apply()
+
+    fun getAppPin(): String? = prefs.getString(KEY_APP_PIN, null)
+    fun saveAppPin(pin: String) = prefs.edit().putString(KEY_APP_PIN, pin).apply()
+    fun hasAppPin(): Boolean = !getAppPin().isNullOrEmpty()
+
+    fun getGracePeriodSeconds(): Int = prefs.getInt(KEY_GRACE_PERIOD_SECONDS, 20)
+    fun saveGracePeriodSeconds(seconds: Int) = prefs.edit().putInt(KEY_GRACE_PERIOD_SECONDS, seconds).apply()
+
+    fun getMotionSensitivity(): String = prefs.getString(KEY_MOTION_SENSITIVITY, "MEDIUM") ?: "MEDIUM"
+    fun saveMotionSensitivity(sensitivity: String) = prefs.edit().putString(KEY_MOTION_SENSITIVITY, sensitivity).apply()
+
+    fun isScheduledAlertEnabled(): Boolean = prefs.getBoolean(KEY_SCHEDULED_ALERT_ENABLED, false)
+    fun saveScheduledAlertEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_SCHEDULED_ALERT_ENABLED, enabled).apply()
+
+    fun getScheduledStartHour(): Int = prefs.getInt(KEY_SCHEDULED_START_HOUR, 22)
+    fun getScheduledStartMinute(): Int = prefs.getInt(KEY_SCHEDULED_START_MINUTE, 0)
+    fun getScheduledEndHour(): Int = prefs.getInt(KEY_SCHEDULED_END_HOUR, 6)
+    fun getScheduledEndMinute(): Int = prefs.getInt(KEY_SCHEDULED_END_MINUTE, 0)
+
+    fun saveScheduledAlertTimes(startHour: Int, startMinute: Int, endHour: Int, endMinute: Int) {
+        prefs.edit()
+            .putInt(KEY_SCHEDULED_START_HOUR, startHour)
+            .putInt(KEY_SCHEDULED_START_MINUTE, startMinute)
+            .putInt(KEY_SCHEDULED_END_HOUR, endHour)
+            .putInt(KEY_SCHEDULED_END_MINUTE, endMinute)
+            .apply()
+    }
+
     companion object {
         @Volatile
         private var INSTANCE: TokenStore? = null
@@ -216,5 +252,18 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_SAFE_LNG = "safe_lng"
         private const val KEY_SAFE_RADIUS = "safe_radius"
         private const val KEY_SAFE_ENABLED = "safe_enabled"
+
+        private const val KEY_ESCALATION_SMS = "opt_in_escalation_sms"
+        private const val KEY_SILENCE_EMAIL = "opt_in_silence_email"
+        private const val KEY_DEVICE_IMEI = "device_imei"
+        private const val KEY_APP_PIN = "app_local_pin"
+
+        private const val KEY_GRACE_PERIOD_SECONDS = "grace_period_seconds"
+        private const val KEY_MOTION_SENSITIVITY = "motion_sensitivity"
+        private const val KEY_SCHEDULED_ALERT_ENABLED = "scheduled_alert_enabled"
+        private const val KEY_SCHEDULED_START_HOUR = "scheduled_start_hour"
+        private const val KEY_SCHEDULED_START_MINUTE = "scheduled_start_minute"
+        private const val KEY_SCHEDULED_END_HOUR = "scheduled_end_hour"
+        private const val KEY_SCHEDULED_END_MINUTE = "scheduled_end_minute"
     }
 }

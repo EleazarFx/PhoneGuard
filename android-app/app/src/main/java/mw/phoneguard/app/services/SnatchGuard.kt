@@ -23,7 +23,7 @@ import mw.phoneguard.app.data.storage.TokenStore
 
 class SnatchGuard(
     private val context: Context,
-    private val gracePeriodMs: Long = 20_000L
+    private val gracePeriodMs: Long = TokenStore.get(context).getGracePeriodSeconds() * 1000L
 ) {
 
     private val TAG = "PhoneGuardSnatchGuard"
@@ -33,9 +33,22 @@ class SnatchGuard(
 
     private var isActive = false
     private var unlockReceiver: BroadcastReceiver? = null
+    private var remainingMs = gracePeriodMs
 
     private val gracePeriodRunnable = Runnable {
         onGracePeriodExpired()
+    }
+
+    private val countdownRunnable = object : Runnable {
+        override fun run() {
+            remainingMs -= 5000L
+            if (remainingMs > 0) {
+                showGracePeriodNotificationWithRemaining(remainingMs / 1000L)
+                handler.postDelayed(this, 5000L)
+            } else {
+                showGracePeriodNotificationWithRemaining(0L)
+            }
+        }
     }
 
     fun start() {
@@ -46,11 +59,13 @@ class SnatchGuard(
 
         Log.w(TAG, "SnatchGuard activated — alarm starting, grace period ${gracePeriodMs}ms")
         isActive = true
+        remainingMs = gracePeriodMs
 
         alarmPlayer.play()
         registerUnlockReceiver()
-        showGracePeriodNotification()
+        showGracePeriodNotificationWithRemaining(gracePeriodMs / 1000L)
 
+        handler.postDelayed(countdownRunnable, 5000L)
         handler.postDelayed(gracePeriodRunnable, gracePeriodMs)
     }
 
@@ -59,6 +74,7 @@ class SnatchGuard(
         Log.i(TAG, "SnatchGuard stopping")
         isActive = false
         handler.removeCallbacks(gracePeriodRunnable)
+        handler.removeCallbacks(countdownRunnable)
         unregisterUnlockReceiver()
         alarmPlayer.stop()
         cancelGraceNotification()
@@ -68,7 +84,7 @@ class SnatchGuard(
     // Notification
     // ─────────────────────────────────────────────────────
 
-    private fun showGracePeriodNotification() {
+    private fun showGracePeriodNotificationWithRemaining(remainingSeconds: Long) {
         val manager = context.getSystemService(NotificationManager::class.java)
         ensureNotificationChannel(manager)
 
@@ -82,7 +98,7 @@ class SnatchGuard(
 
         val notification = NotificationCompat.Builder(context, GRACE_CHANNEL_ID)
             .setContentTitle("PhoneGuard · Alarm Active")
-            .setContentText("Unlock within ${gracePeriodMs / 1000} seconds to silence")
+            .setContentText("Unlock within $remainingSeconds seconds to silence")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(contentIntent)
             .setOngoing(true)
@@ -93,7 +109,7 @@ class SnatchGuard(
             .build()
 
         manager.notify(GRACE_NOTIFICATION_ID, notification)
-        Log.i(TAG, "Grace-period notification shown")
+        Log.i(TAG, "Grace-period notification updated: ${remainingSeconds}s remaining")
     }
 
     private fun cancelGraceNotification() {

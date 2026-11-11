@@ -43,11 +43,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         // Observe the pending-sync count from Room in real time
         viewModelScope.launch {
             database.eventDao().observeUnsyncedCount().collect { count ->
-                Log.d("HomeViewModel", "Unsynced count changed to: $count")
-                _uiState.value = _uiState.value.copy(
-                    unsyncedEventCount = count,
-                    trustedContactsCount = tokenStore.getTrustedContacts().size
-                )
+                _uiState.value = _uiState.value.copy(unsyncedEventCount = count)
+            }
+        }
+        // Observe contacts count from Room in real time
+        viewModelScope.launch {
+            database.contactDao().observeAll().collect { contacts ->
+                _uiState.value = _uiState.value.copy(trustedContactsCount = contacts.size)
             }
         }
     }

@@ -61,3 +61,11 @@ object PasswordResetTokens : UUIDTable("password_reset_tokens") {
     val expiresAt = datetime("expires_at")
     val used = bool("used").default(false)
 }
+
+object TrustedContacts : UUIDTable("trusted_contacts") {
+    val userId = reference("user_id", Users, onDelete = ReferenceOption.CASCADE)
+    val name = varchar("name", 100)
+    val phone = varchar("phone", 30)
+    val email = varchar("email", 255).nullable()
+    val createdAt = datetime("created_at")
+}
