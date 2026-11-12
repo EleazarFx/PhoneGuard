@@ -37,15 +37,18 @@ import mw.phoneguard.models.CommandStatusRequest
 import mw.phoneguard.models.CreateCommandRequest
 import mw.phoneguard.models.ForgotPasswordRequest
 import mw.phoneguard.models.ResetPasswordRequest
+import mw.phoneguard.models.VerifyNewDeviceRequest
 import mw.phoneguard.services.PasswordResetService
-import mw.phoneguard.services.EmailService  
+import mw.phoneguard.services.EmailService
+import mw.phoneguard.services.NewDeviceService
+import java.util.UUID
 
 fun Application.configureRouting(jwtService: JwtService, emailService: EmailService) {
     val userService = UserService()
     val deviceService = DeviceService()
     val contactService = ContactService()
     val resetService = PasswordResetService(emailService)
-    
+    val newDeviceService = NewDeviceService(emailService)
 
     routing {
         get("/") {
@@ -81,8 +84,71 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
                 return@post
             }
 
-            val accessToken = jwtService.generateAccessToken(user.id)
-            val refreshToken = jwtService.generateRefreshToken(user.id)
+            val fingerprint = newDeviceService.computeFingerprint(req.deviceInfo)
+            val userIdUuid = UUID.fromString(user.id)
+
+            // Edge case per spec Section 9.9 / Requirement 11c:
+            // If account has no email verified yet (emailVerified == false), fall back to allowing login
+            // and record device as known so the user is not blocked.
+            if (!user.emailVerified) {
+                newDeviceService.recordKnownDevice(userIdUuid, fingerprint)
+                val accessToken = jwtService.generateAccessToken(user.id)
+                val refreshToken = jwtService.generateRefreshToken(user.id)
+                call.respond(
+                    LoginResponse(
+                        accessToken = accessToken,
+                        refreshToken = refreshToken,
+                        expiresIn = JwtService.ACCESS_TOKEN_LIFETIME_MS / 1000
+                    )
+                )
+                return@post
+            }
+
+            val isKnown = newDeviceService.isDeviceKnown(userIdUuid, fingerprint)
+            if (isKnown) {
+                val accessToken = jwtService.generateAccessToken(user.id)
+                val refreshToken = jwtService.generateRefreshToken(user.id)
+                call.respond(
+                    LoginResponse(
+                        accessToken = accessToken,
+                        refreshToken = refreshToken,
+                        expiresIn = JwtService.ACCESS_TOKEN_LIFETIME_MS / 1000
+                    )
+                )
+            } else {
+                val sent = newDeviceService.createAndSendVerificationCode(user, fingerprint)
+                if (!sent) {
+                    call.respond(
+                        HttpStatusCode.TooManyRequests,
+                        ErrorResponse("Rate limit exceeded: maximum 3 verification codes per hour.")
+                    )
+                    return@post
+                }
+                call.respond(
+                    HttpStatusCode.Accepted,
+                    mapOf(
+                        "status" to "verification_required",
+                        "message" to "New device detected. Verification code sent to email."
+                    )
+                )
+            }
+        }
+
+        post("/auth/verify-new-device") {
+            val req = call.receive<VerifyNewDeviceRequest>()
+            val fingerprint = newDeviceService.computeFingerprint(req.deviceInfo)
+            val userIdStr = newDeviceService.verifyCodeAndRegisterDevice(req.email, req.code, fingerprint)
+
+            if (userIdStr == null) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse("Invalid or expired verification code")
+                )
+                return@post
+            }
+
+            val accessToken = jwtService.generateAccessToken(userIdStr)
+            val refreshToken = jwtService.generateRefreshToken(userIdStr)
 
             call.respond(
                 LoginResponse(
@@ -91,9 +157,8 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
                     expiresIn = JwtService.ACCESS_TOKEN_LIFETIME_MS / 1000
                 )
             )
-               
         }
-        
+
         post("/auth/forgot-password") {
             val req = call.receive<ForgotPasswordRequest>()
             resetService.requestReset(req.email)
@@ -113,12 +178,6 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
                 call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid or expired code."))
             }
         }
-        
-
-
-
-
-        
 
         authenticate("auth-jwt") {
             get("/auth/me") {
@@ -162,7 +221,6 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
                 val userId = principal.payload.getClaim("userId").asString()
                 call.respond(deviceService.listForUser(userId))
             }
-
 
             // Queue a command for a device
             post("/devices/{deviceId}/commands") {
@@ -267,7 +325,6 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
             }
         }
 
-
         // Device-scoped routes (auth-device scheme)
         authenticate("auth-device") {
 
@@ -312,7 +369,6 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
                 call.respond(commands)
             }
 
-
             // Report status of a command the device fetched
             post("/device/{deviceId}/commands/{commandId}/status") {
                 val urlDeviceId = call.parameters["deviceId"]!!
@@ -340,10 +396,6 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
 
                 call.respond(HttpStatusCode.OK, mapOf("acknowledged" to true))
             }
-
-
         }
-
-
     }
 }

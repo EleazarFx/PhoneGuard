@@ -26,5 +26,7 @@ data class EventEntity(
     val captureStatus: String? = null,    // "captured", "no_face", "back_fallback", "camera_blocked", "deferred"
     val photoSha256: String? = null,
     val clientSeq: Long? = null,
-    val syncedAt: Long? = null            // null = not yet synced; non-null = synced to server at this time
+    val syncedAt: Long? = null,           // null = not yet synced; non-null = synced to server at this time
+    val isPreserved: Boolean = false,     // exempt from 30-day auto-purge
+    val isDismissed: Boolean = false      // marked "Not a threat" by user
 )

@@ -38,6 +38,7 @@ class CommandPollWorker(
 
         when (val result = deviceApi.getCommands(deviceToken, deviceId)) {
             is ApiResult.Success -> {
+                TokenStore.get(context).saveLastCheckInTime(System.currentTimeMillis())
                 val commands = result.value
                 Log.i(TAG, "Fetched ${commands.size} command(s)")
                 val executor = CommandExecutor(context)

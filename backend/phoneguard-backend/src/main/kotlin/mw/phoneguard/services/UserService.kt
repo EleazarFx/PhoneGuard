@@ -10,7 +10,7 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.LocalDateTime
 import java.util.UUID
 
-data class AuthenticatedUser(val id: String, val email: String)
+data class AuthenticatedUser(val id: String, val email: String, val emailVerified: Boolean)
 
 class UserService {
 
@@ -59,7 +59,8 @@ class UserService {
 
             AuthenticatedUser(
                 id = row[Users.id].value.toString(),
-                email = row[Users.email]
+                email = row[Users.email],
+                emailVerified = row[Users.emailVerified]
             )
         }
     }

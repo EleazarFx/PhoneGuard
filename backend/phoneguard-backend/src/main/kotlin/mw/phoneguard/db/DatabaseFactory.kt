@@ -20,16 +20,17 @@ object DatabaseFactory {
         Database.connect(dataSource)
 
         transaction {
-            SchemaUtils.create(Users, Devices, Events, Commands, PasswordResetTokens, TrustedContacts)
+            SchemaUtils.create(Users, Devices, Events, Commands, PasswordResetTokens, TrustedContacts, KnownDevices, NewDeviceVerificationTokens)
         }
     }
 
     private fun hikari(url: String, user: String, password: String): DataSource {
+        val driver = if (url.contains("h2")) "org.h2.Driver" else "org.postgresql.Driver"
         val config = HikariConfig().apply {
             jdbcUrl = url
             username = user
             this.password = password
-            driverClassName = "org.postgresql.Driver"
+            driverClassName = driver
             maximumPoolSize = 5
             isAutoCommit = false
             transactionIsolation = "TRANSACTION_REPEATABLE_READ"

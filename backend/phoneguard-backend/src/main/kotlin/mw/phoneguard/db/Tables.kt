@@ -69,3 +69,20 @@ object TrustedContacts : UUIDTable("trusted_contacts") {
     val email = varchar("email", 255).nullable()
     val createdAt = datetime("created_at")
 }
+
+object KnownDevices : UUIDTable("known_devices") {
+    val userId = reference("user_id", Users, onDelete = ReferenceOption.CASCADE)
+    val deviceFingerprint = varchar("device_fingerprint", 255)
+    val firstSeenAt = datetime("first_seen_at")
+    val lastSeenAt = datetime("last_seen_at")
+}
+
+object NewDeviceVerificationTokens : UUIDTable("new_device_verification_tokens") {
+    val userId = reference("user_id", Users, onDelete = ReferenceOption.CASCADE)
+    val email = varchar("email", 255)
+    val deviceFingerprint = varchar("device_fingerprint", 255)
+    val otpCode = varchar("otp_code", 6)
+    val expiresAt = datetime("expires_at")
+    val used = bool("used").default(false)
+    val createdAt = datetime("created_at")
+}

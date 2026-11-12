@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
 import mw.phoneguard.app.services.PhoneGuardAdminReceiver
 import mw.phoneguard.app.services.PhoneGuardService
@@ -36,6 +37,8 @@ data class SettingsUiState(
     val isAdminActive: Boolean = false,
     val imei: String = "",
     val hasAppPin: Boolean = false,
+    val autoWipeEnabled: Boolean = false,
+    val crashReportConsent: Boolean = false,
     val logs: List<String> = emptyList()
 )
 
@@ -61,10 +64,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             isAdminActive = checkAdminActive(),
             imei = tokenStore.getImei() ?: "",
             hasAppPin = tokenStore.hasAppPin(),
+            autoWipeEnabled = tokenStore.isAutoWipeOnPinFailureEnabled(),
+            crashReportConsent = tokenStore.getCrashReportConsent(),
             logs = ServiceLogger.getLogs()
         )
     )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    fun toggleCrashReportConsent(enabled: Boolean) {
+        tokenStore.setCrashReportConsent(enabled)
+        _uiState.value = _uiState.value.copy(crashReportConsent = enabled)
+    }
 
     fun toggleVideoEvidence(enabled: Boolean) {
         tokenStore.saveVideoEvidenceEnabled(enabled)
@@ -137,8 +147,46 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun saveAppPin(pin: String) {
-        tokenStore.saveAppPin(pin)
-        _uiState.value = _uiState.value.copy(hasAppPin = true)
+        try {
+            val hashed = org.mindrot.jbcrypt.BCrypt.hashpw(pin, org.mindrot.jbcrypt.BCrypt.gensalt(12))
+            tokenStore.saveAppPin(hashed)
+            _uiState.value = _uiState.value.copy(hasAppPin = true)
+            ServiceLogger.log("Settings", "App PIN saved/updated")
+        } catch (e: Exception) {
+            Log.e("SettingsViewModel", "Failed to save app PIN", e)
+        }
+    }
+
+    fun verifyOldPin(oldPin: String): Boolean {
+        val storedHash = tokenStore.getAppPin() ?: return false
+        return try {
+            org.mindrot.jbcrypt.BCrypt.checkpw(oldPin, storedHash)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun toggleAutoWipe(enabled: Boolean) {
+        tokenStore.saveAutoWipeOnPinFailureEnabled(enabled)
+        _uiState.value = _uiState.value.copy(autoWipeEnabled = enabled)
+    }
+
+    fun wipeAppDataWithPin(pin: String, onResult: (Boolean, String) -> Unit) {
+        if (!verifyOldPin(pin)) {
+            onResult(false, "Incorrect PIN")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                PhoneGuardDatabase.get(context).clearAllTables()
+                tokenStore.clearAll()
+                mw.phoneguard.app.services.AppSessionManager.clear()
+                onResult(true, "App data wiped successfully")
+            } catch (e: Exception) {
+                onResult(false, "Failed to wipe data: ${e.message}")
+            }
+        }
     }
 
     fun deactivateDeviceAdmin(context: Context) {
@@ -282,6 +330,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             isAdminActive = checkAdminActive(),
             imei = tokenStore.getImei() ?: "",
             hasAppPin = tokenStore.hasAppPin(),
+            autoWipeEnabled = tokenStore.isAutoWipeOnPinFailureEnabled(),
             logs = ServiceLogger.getLogs()
         )
     }

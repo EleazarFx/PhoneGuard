@@ -85,31 +85,35 @@ class SnatchGuard(
     // ─────────────────────────────────────────────────────
 
     private fun showGracePeriodNotificationWithRemaining(remainingSeconds: Long) {
-        val manager = context.getSystemService(NotificationManager::class.java)
-        ensureNotificationChannel(manager)
+        try {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            ensureNotificationChannel(manager)
 
-        // Tapping the notification opens the app so the user can unlock normally
-        val contentIntent = PendingIntent.getActivity(
-            context,
-            0,
-            Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+            // Tapping the notification opens the app so the user can unlock normally
+            val contentIntent = PendingIntent.getActivity(
+                context,
+                0,
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
 
-        val notification = NotificationCompat.Builder(context, GRACE_CHANNEL_ID)
-            .setContentTitle("PhoneGuard · Alarm Active")
-            .setContentText("Unlock within $remainingSeconds seconds to silence")
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setContentIntent(contentIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(false)
-            .build()
+            val notification = NotificationCompat.Builder(context, GRACE_CHANNEL_ID)
+                .setContentTitle("PhoneGuard · Alarm Active")
+                .setContentText("Unlock within $remainingSeconds seconds to silence")
+                .setSmallIcon(android.R.drawable.ic_lock_lock)
+                .setContentIntent(contentIntent)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setAutoCancel(false)
+                .build()
 
-        manager.notify(GRACE_NOTIFICATION_ID, notification)
-        Log.i(TAG, "Grace-period notification updated: ${remainingSeconds}s remaining")
+            manager.notify(GRACE_NOTIFICATION_ID, notification)
+            Log.i(TAG, "Grace-period notification updated: ${remainingSeconds}s remaining")
+        } catch (e: Exception) {
+            Log.w(TAG, "showGracePeriodNotificationWithRemaining: ${e.message}")
+        }
     }
 
     private fun cancelGraceNotification() {

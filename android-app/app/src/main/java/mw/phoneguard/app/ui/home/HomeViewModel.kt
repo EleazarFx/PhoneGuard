@@ -32,11 +32,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             deviceRegistered = tokenStore.hasDeviceRegistered(),
             isAdminActive = checkAdminActive(),
             alertModeArmed = tokenStore.isAlertModeArmed(),
+            lastCheckInText = computeLastCheckInText(),
             trustedContactsCount = tokenStore.getTrustedContacts().size,
             unsyncedEventCount = 0
         )
     )
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    private fun computeLastCheckInText(): String {
+        val lastCheckIn = tokenStore.getLastCheckInTime()
+        val diffMs = System.currentTimeMillis() - lastCheckIn
+        val diffMinutes = diffMs / (60 * 1000)
+        return if (diffMinutes >= 15) {
+            "Device silent since $diffMinutes minutes"
+        } else if (diffMinutes <= 1) {
+            "Just now"
+        } else {
+            "${diffMinutes}m ago"
+        }
+    }
 
     init {
         Log.d("HomeViewModel", "Initializing HomeViewModel; deviceId=${tokenStore.getDeviceId()}")
@@ -72,7 +86,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             userEmail = tokenStore.getUserEmail(),
             deviceRegistered = tokenStore.hasDeviceRegistered(),
-            trustedContactsCount = tokenStore.getTrustedContacts().size
+            trustedContactsCount = tokenStore.getTrustedContacts().size,
+            lastCheckInText = computeLastCheckInText()
         )
     }
 

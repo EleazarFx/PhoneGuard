@@ -5,12 +5,14 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpStatusCode
+import mw.phoneguard.app.data.models.DeviceInfo
 import mw.phoneguard.app.data.models.LoginRequest
 import mw.phoneguard.app.data.models.LoginResponse
 import mw.phoneguard.app.data.models.RegisterRequest
 import mw.phoneguard.app.data.models.RegisterResponse
 import mw.phoneguard.app.data.models.ForgotPasswordRequest
 import mw.phoneguard.app.data.models.ResetPasswordRequest
+import mw.phoneguard.app.data.models.VerifyNewDeviceRequest
 
 /**
  * Result type used by every API function.
@@ -21,6 +23,11 @@ import mw.phoneguard.app.data.models.ResetPasswordRequest
 sealed class ApiResult<out T> {
     data class Success<T>(val value: T) : ApiResult<T>()
     data class Failure(val message: String) : ApiResult<Nothing>()
+}
+
+sealed class LoginApiResult {
+    data class Success(val response: LoginResponse) : LoginApiResult()
+    data class VerificationRequired(val message: String) : LoginApiResult()
 }
 
 class AuthApi {
@@ -43,16 +50,39 @@ class AuthApi {
         }
     }
 
-    suspend fun login(email: String, password: String): ApiResult<LoginResponse> {
+    suspend fun login(email: String, password: String, deviceInfo: DeviceInfo?): ApiResult<LoginApiResult> {
         return try {
             val response: HttpResponse = client.post("${ApiClient.BASE_URL}/auth/login") {
-                setBody(LoginRequest(email = email, password = password))
+                setBody(LoginRequest(email = email, password = password, deviceInfo = deviceInfo))
+            }
+            when (response.status) {
+                HttpStatusCode.OK -> {
+                    ApiResult.Success(LoginApiResult.Success(response.body<LoginResponse>()))
+                }
+                HttpStatusCode.Accepted -> {
+                    val body = response.body<Map<String, String>>()
+                    ApiResult.Success(LoginApiResult.VerificationRequired(body["message"] ?: "Verification code sent to email"))
+                }
+                else -> {
+                    val error = response.body<Map<String, String>>()
+                    ApiResult.Failure(error["error"] ?: "Login failed")
+                }
+            }
+        } catch (e: Exception) {
+            ApiResult.Failure(e.message ?: "Network error")
+        }
+    }
+
+    suspend fun verifyNewDevice(email: String, code: String, deviceInfo: DeviceInfo?): ApiResult<LoginResponse> {
+        return try {
+            val response: HttpResponse = client.post("${ApiClient.BASE_URL}/auth/verify-new-device") {
+                setBody(VerifyNewDeviceRequest(email = email, code = code, deviceInfo = deviceInfo))
             }
             if (response.status == HttpStatusCode.OK) {
                 ApiResult.Success(response.body<LoginResponse>())
             } else {
                 val error = response.body<Map<String, String>>()
-                ApiResult.Failure(error["error"] ?: "Login failed")
+                ApiResult.Failure(error["error"] ?: "Verification failed")
             }
         } catch (e: Exception) {
             ApiResult.Failure(e.message ?: "Network error")
@@ -69,7 +99,6 @@ class AuthApi {
             ApiResult.Failure(e.message ?: "Network error")
         }
     }
-
 
     suspend fun requestPasswordReset(email: String): ApiResult<Unit> {
         return try {
@@ -101,6 +130,4 @@ class AuthApi {
             ApiResult.Failure(e.message ?: "Network error")
         }
     }
-
-
 }

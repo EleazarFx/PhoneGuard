@@ -15,9 +15,18 @@ data class RegisterResponse(
 )
 
 @Serializable
+data class DeviceInfo(
+    val model: String? = null,
+    val manufacturer: String? = null,
+    val androidId: String? = null,
+    val imei: String? = null
+)
+
+@Serializable
 data class LoginRequest(
     val email: String,
-    val password: String
+    val password: String,
+    val deviceInfo: DeviceInfo? = null
 )
 
 @Serializable
@@ -25,6 +34,13 @@ data class LoginResponse(
     val accessToken: String,
     val refreshToken: String,
     val expiresIn: Long
+)
+
+@Serializable
+data class VerifyNewDeviceRequest(
+    val email: String,
+    val code: String,
+    val deviceInfo: DeviceInfo? = null
 )
 
 @Serializable

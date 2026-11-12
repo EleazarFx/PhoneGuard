@@ -1,62 +1,90 @@
-# Implementation Plan - Feature 7: Command Polling & Execution
+# Implementation Plan - Feature 15: App PIN Gate & Session-Based Unlock
 
-Implement remote command polling and execution for PhoneGuard, supporting backend communication (`GET /device/{deviceId}/commands` and `POST /device/{deviceId}/commands/{commandId}/status`), secure execution of commands (`LOCK`, `ALARM`, `MESSAGE`, `LOCATE`, `LIVE_TRACK`, `WIPE`, and unknown), and WorkManager-based adaptive polling (every 60s when locked, every 15 min when active).
+This plan outlines the implementation of Feature 15 (App PIN Gate with session-based unlock, setup, lockout handling, PIN change, and security protections) in PhoneGuard.
 
 ## User Review Required
 
 > [!IMPORTANT]
-> - **WIPE Execution**: Requires both Device Admin active and `wipe_allowed` (`remoteWipeEnabled`) set to `true` in `TokenStore` (controlled via Settings).
-> - **Polling Frequency**: Uses WorkManager `OneTimeWorkRequest` with 60s delay when screen/device is locked, and `PeriodicWorkRequest` (15 min interval) when active/unlocked.
+> - **BCrypt Dependency**: We will add `org.mindrot:jbcrypt:0.4` to `app/build.gradle.kts` for secure password/PIN hashing (cost=12).
+> - **Session-Based Unlock**: Once unlocked, sessions remain valid for 5 minutes of inactivity. Navigation between Home, Activity, Contacts, and Settings will NOT prompt for PIN within an active session.
+> - **Defense-in-Depth Destructive Actions**: Changing PIN requires OLD PIN. Wiping app data requires PIN + typing "DELETE". Logging out requires a confirmation dialog.
+
+## Open Questions
+
+- None. All requirements (15a to 15h) are fully specified.
 
 ## Proposed Changes
 
-### Data Models & API (`mw.phoneguard.app.data.models` & `mw.phoneguard.app.data.api`)
+### Dependencies & Storage
 
-#### [NEW] [Commands.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/data/models/Commands.kt)
-- Define `@Serializable` data classes `CommandResponse` (`id`, `type`, `params`, `duration`, `message`, `minutes`, `expiresAt`, `createdAt`) and `CommandStatusRequest` (`status`, `message`, `timestamp`).
-
-#### [MODIFY] [DeviceApi.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/data/api/DeviceApi.kt)
-- Add `getCommands(deviceToken: String, deviceId: String): ApiResult<List<CommandResponse>>`
-- Add `postCommandStatus(deviceToken: String, deviceId: String, commandId: String, status: String, message: String? = null): ApiResult<Unit>`
-
----
-
-### Command Execution & Workers (`mw.phoneguard.app.services`)
-
-#### [NEW] [CommandExecutor.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/services/CommandExecutor.kt)
-- Handle execution logic for each command type:
-  1. `LOCK`: `DevicePolicyManager.lockNow()` (checks device admin).
-  2. `ALARM`: Play alarm using `AlarmPlayer` for `duration` seconds (default 30s), then stop.
-  3. `MESSAGE`: Show full-screen notification / overlay with message text.
-  4. `LOCATE`: Read location using `EvidenceCapturer` / location services, send location heartbeat (`postEvent` with `location_ping` or location event).
-  5. `LIVE_TRACK`: For `minutes` (default 5 min), send location every 30s.
-  6. `WIPE`: Call `dpm.wipeData(0)` (requires device admin and `TokenStore.isRemoteWipeEnabled()`).
-  7. Unknown command: report `failed: unknown_command`.
-
-#### [NEW] [CommandPollWorker.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/services/CommandPollWorker.kt)
-- CoroutineWorker that:
-  - Fetches pending commands via `DeviceApi`.
-  - Checks expiration (`expiresAt`): if expired, reports `expired` and skips.
-  - Reports `delivered` immediately upon fetching.
-  - Executes command via `CommandExecutor`.
-  - Reports `executed` on success or `failed` with error message on failure.
-  - If screen is still locked, enqueues the next 60s `OneTimeWorkRequest`.
-
-#### [MODIFY] [PhoneGuardService.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/services/PhoneGuardService.kt)
-- Schedule WorkManager command polling when service starts, screen locks (60s polling), or screen unlocks (15 min periodic polling).
-
----
-
-### Settings & TokenStore
+#### [MODIFY] [build.gradle.kts](file:///home/eleazar/Documents/PhoneGuard/android-app/app/build.gradle.kts)
+- Add `implementation("org.mindrot:jbcrypt:0.4")` for BCrypt hashing.
 
 #### [MODIFY] [TokenStore.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/data/storage/TokenStore.kt)
-- Ensure `isRemoteWipeEnabled()` / `saveRemoteWipeEnabled()` supports `wipe_allowed` flag check for WIPE command.
+- Add methods for storing/retrieving pin failed attempts count, lockout timestamp, first failure timestamp, and auto-wipe on 10 failures preference.
+
+---
+
+### Session & Lifecycle Management
+
+#### [NEW] [AppSessionManager.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/services/AppSessionManager.kt)
+- In-memory singleton (`object AppSessionManager`) managing `isUnlocked`, `lastActivityTime`.
+- Methods: `unlock(pin, context)`, `touch()`, `checkExpiry()`, `lock()`, `clear()`.
+- Failed attempt handling with lockout logic (3 failures -> 60s, 5 failures -> 5m, 10 failures -> auto-wipe if enabled).
+- Logs `tamper_app_pin` event to Room database on failed PIN attempts.
+
+#### [NEW] [AppLifecycleObserver.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/services/AppLifecycleObserver.kt)
+- Uses `androidx.lifecycle.ProcessLifecycleOwner` to detect app background/foreground transitions (`ON_STOP` -> record time leaving; `ON_START` -> check session expiry).
+
+---
+
+### UI Components & Screens
+
+#### [NEW] [PinEntryScreen.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/ui/auth/PinEntryScreen.kt)
+- 4-6 digit masked PIN entry (`●●●●`), NumberPassword keyboard.
+- Lockout timer countdown display.
+- "Log out / Forgot PIN" option to clear session and re-login.
+
+#### [NEW] [PinSetupScreen.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/ui/auth/PinSetupScreen.kt)
+- Prompts user after first login to set a 4-6 digit PIN, confirmed twice.
+- Hashes with BCrypt cost=12 and stores in `TokenStore`.
+
+#### [MODIFY] [MainActivity.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/MainActivity.kt)
+- Set `FLAG_SECURE` on window (prevent screenshots and recent-apps thumbnails).
+- Check login state, PIN setup state (`hasAppPin`), and `AppSessionManager.isUnlocked`.
+- Show `PinSetupScreen` if logged in but no app PIN set yet.
+- Show `PinEntryScreen` if logged in, has app PIN, but session is locked/expired.
+- Otherwise show main app screens (Home, Activity, Contacts, Settings) with touch recording on interaction.
+
+---
+
+### Settings & Destructive Actions
+
+#### [MODIFY] [SettingsViewModel.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/ui/settings/SettingsViewModel.kt)
+- Add methods for verifying old PIN and updating PIN.
+- Add toggle for auto-wipe on 10 failed PIN attempts.
+- Add app data wipe method.
+
+#### [MODIFY] [SettingsScreen.kt](file:///home/eleazar/Documents/PhoneGuard/android-app/app/src/main/java/mw/phoneguard/app/ui/settings/SettingsScreen.kt)
+- Update "Security & Admin" section:
+  - Change App PIN dialog (requires OLD PIN, then NEW PIN twice).
+  - Wipe App Data dialog (requires PIN + typing "DELETE").
+  - Log out confirmation dialog.
+  - Auto-wipe toggle on failed attempts.
+
+---
 
 ## Verification Plan
 
 ### Automated Tests
-- Build project successfully using `./gradlew app:assembleDebug`.
+- Build verification via `gradle_build(":app:assembleDebug")`.
 
 ### Manual Verification
-- Deploy to device/emulator (`./gradlew app:installDebug`).
-- Verify command polling and execution via backend simulation or logcat inspection.
+- Deploy app to device/emulator.
+- Set PIN on first login -> close app -> reopen -> verify PIN required.
+- Enter correct PIN -> navigate freely to Settings, Activity, Contacts (no PIN prompts).
+- Close app, wait 6 minutes (or test expiry), reopen -> verify PIN required.
+- Change app PIN -> verify old PIN required first.
+- Enter incorrect PIN 3 times -> verify 60s lockout.
+- Test log out confirmation and forgot PIN flow.
+- Test app data wipe with PIN + "DELETE".

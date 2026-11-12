@@ -156,10 +156,11 @@ fun HomeScreen(
                 color = TextPrimary
             )
             Spacer(Modifier.height(6.dp))
+            val isSilent = lastCheckIn.startsWith("Device silent")
             Text(
-                text = "Last check-in $lastCheckIn",
+                text = if (isSilent) lastCheckIn else "Last check-in $lastCheckIn",
                 fontSize = 13.sp,
-                color = TextMuted
+                color = if (isSilent) WarnAmber else TextMuted
             )
 
             Spacer(Modifier.height(28.dp))

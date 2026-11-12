@@ -54,6 +54,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import mw.phoneguard.app.AppScreen
 import mw.phoneguard.app.BuildConfig
+import mw.phoneguard.app.services.AppSessionManager
 import mw.phoneguard.app.services.PhoneGuardAdminReceiver
 import mw.phoneguard.app.ui.theme.AlertRed
 import mw.phoneguard.app.ui.theme.GuardTeal
@@ -81,7 +82,19 @@ fun SettingsScreen(
     var showImeiDialog by remember { mutableStateOf(false) }
     var imeiInput by remember(state.imei) { mutableStateOf(state.imei) }
     var showPinDialog by remember { mutableStateOf(false) }
-    var pinInput by remember { mutableStateOf("") }
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    var showWipeDataDialog by remember { mutableStateOf(false) }
+
+    // PIN change inputs
+    var oldPinInput by remember { mutableStateOf("") }
+    var newPinInput by remember { mutableStateOf("") }
+    var confirmNewPinInput by remember { mutableStateOf("") }
+    var pinError by remember { mutableStateOf<String?>(null) }
+
+    // Wipe data inputs
+    var wipePinInput by remember { mutableStateOf("") }
+    var wipeDeleteInput by remember { mutableStateOf("") }
+    var wipeError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.refresh()
@@ -169,7 +182,7 @@ fun SettingsScreen(
                     HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
                     Spacer(Modifier.height(16.dp))
 
-                    // Reset Original SIM button (Critical 8c Flow)
+                    // Reset Original SIM button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -200,7 +213,7 @@ fun SettingsScreen(
                             ),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Reset Baseline", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Reset", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -228,7 +241,7 @@ fun SettingsScreen(
                             )
                         }
                         Button(
-                            onClick = { onLogout() },
+                            onClick = { showLogoutDialog = true },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = AlertRed.copy(alpha = 0.15f),
                                 contentColor = AlertRed
@@ -254,163 +267,69 @@ fun SettingsScreen(
                         .background(PanelDark)
                         .padding(20.dp)
                 ) {
-                    // Grace Period
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            "Grace Period",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextPrimary
-                        )
-                        Text(
-                            "Countdown before snatch alarm locks the phone",
-                            fontSize = 12.sp,
-                            color = TextMuted
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf(10, 20, 30, 60).forEach { secs ->
-                                val selected = state.gracePeriodSeconds == secs
-                                Button(
-                                    onClick = { viewModel.setGracePeriod(secs) },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (selected) GuardTeal else MaterialTheme.colorScheme.surface,
-                                        contentColor = if (selected) MaterialTheme.colorScheme.background else TextPrimary
-                                    ),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("${secs}s", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
-                    Spacer(Modifier.height(16.dp))
-
-                    // Motion Sensitivity
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            "Motion Sensitivity",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextPrimary
-                        )
-                        Text(
-                            "Low (6.0), Medium (4.5), High (3.0)",
-                            fontSize = 12.sp,
-                            color = TextMuted
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf("LOW" to "Low", "MEDIUM" to "Medium", "HIGH" to "High").forEach { (key, label) ->
-                                val selected = state.motionSensitivity == key
-                                Button(
-                                    onClick = { viewModel.setMotionSensitivity(key) },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (selected) GuardTeal else MaterialTheme.colorScheme.surface,
-                                        contentColor = if (selected) MaterialTheme.colorScheme.background else TextPrimary
-                                    ),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
-                    Spacer(Modifier.height(16.dp))
-
-                    // Scheduled Alert Mode
+                    // Video Evidence Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                             Text(
-                                "Scheduled Alert Mode",
+                                "Video Evidence Capture",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = TextPrimary
                             )
                             Text(
-                                "Auto-arm during specific hours (${String.format(java.util.Locale.ROOT, "%02d:%02d", state.scheduledStartHour, state.scheduledStartMinute)} - ${String.format(java.util.Locale.ROOT, "%02d:%02d", state.scheduledEndHour, state.scheduledEndMinute)})",
+                                "Record front camera video during threat events",
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
                         }
                         Switch(
-                            checked = state.scheduledAlertEnabled,
-                            onCheckedChange = viewModel::setScheduledAlertEnabled,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = GuardTeal,
-                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surface
-                            )
+                            checked = state.videoEvidenceEnabled,
+                            onCheckedChange = viewModel::toggleVideoEvidence,
+                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
                         )
                     }
 
-                    if (state.scheduledAlertEnabled) {
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    android.app.TimePickerDialog(
-                                        context,
-                                        { _, h, m -> viewModel.setScheduledTimes(h, m, state.scheduledEndHour, state.scheduledEndMinute) },
-                                        state.scheduledStartHour,
-                                        state.scheduledStartMinute,
-                                        true
-                                    ).show()
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Start: ${String.format(java.util.Locale.ROOT, "%02d:%02d", state.scheduledStartHour, state.scheduledStartMinute)}", fontSize = 12.sp)
-                            }
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
+                    Spacer(Modifier.height(14.dp))
 
-                            OutlinedButton(
-                                onClick = {
-                                    android.app.TimePickerDialog(
-                                        context,
-                                        { _, h, m -> viewModel.setScheduledTimes(state.scheduledStartHour, state.scheduledStartMinute, h, m) },
-                                        state.scheduledEndHour,
-                                        state.scheduledEndMinute,
-                                        true
-                                    ).show()
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("End: ${String.format(java.util.Locale.ROOT, "%02d:%02d", state.scheduledEndHour, state.scheduledEndMinute)}", fontSize = 12.sp)
-                            }
+                    // Periodic Location Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                "Periodic GPS Location",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                "Include fresh GPS coordinates in telemetry syncs",
+                                fontSize = 12.sp,
+                                color = TextMuted
+                            )
                         }
+                        Switch(
+                            checked = state.periodicLocationEnabled,
+                            onCheckedChange = viewModel::togglePeriodicLocation,
+                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
+                        )
                     }
                 }
 
                 Spacer(Modifier.height(24.dp))
 
                 // ──────────────────────────────────────────────
-                // 3. OPT-IN PROTECTIONS SECTION
+                // 3. DEFENSE & LOCKDOWN POLICIES
                 // ──────────────────────────────────────────────
-                SettingsSectionHeader("OPT-IN PROTECTIONS")
+                SettingsSectionHeader("DEFENSE & LOCKDOWN")
 
                 Column(
                     modifier = Modifier
@@ -419,83 +338,13 @@ fun SettingsScreen(
                         .background(PanelDark)
                         .padding(20.dp)
                 ) {
-                    // Video Evidence toggle
+                    // Offline Auto-Lock Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                            Text(
-                                "Video Evidence Capture",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                "Capture 5-8s video clip on threat triggers (opt-in)",
-                                fontSize = 12.sp,
-                                color = TextMuted
-                            )
-                        }
-                        Switch(
-                            checked = state.videoEvidenceEnabled,
-                            onCheckedChange = viewModel::toggleVideoEvidence,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = GuardTeal,
-                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surface
-                            )
-                        )
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
-                    Spacer(Modifier.height(14.dp))
-
-                    // Periodic Location toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                            Text(
-                                "1-Min Location Broadcast",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                "Broadcast device location every 60s for post-shutdown recovery",
-                                fontSize = 12.sp,
-                                color = TextMuted
-                            )
-                        }
-                        Switch(
-                            checked = state.periodicLocationEnabled,
-                            onCheckedChange = viewModel::togglePeriodicLocation,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = GuardTeal,
-                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surface
-                            )
-                        )
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
-                    Spacer(Modifier.height(14.dp))
-
-                    // Offline Auto-Lock toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                             Text(
                                 "Offline Auto-Lock",
                                 fontSize = 15.sp,
@@ -503,7 +352,7 @@ fun SettingsScreen(
                                 color = TextPrimary
                             )
                             Text(
-                                "Lock screen automatically if offline connection is lost",
+                                "Lock down device if offline for extended period",
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
@@ -511,12 +360,7 @@ fun SettingsScreen(
                         Switch(
                             checked = state.offlineAutoLockEnabled,
                             onCheckedChange = viewModel::toggleOfflineAutoLock,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = GuardTeal,
-                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surface
-                            )
+                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
                         )
                     }
 
@@ -524,13 +368,13 @@ fun SettingsScreen(
                     HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
                     Spacer(Modifier.height(14.dp))
 
-                    // Remote Wipe toggle
+                    // Remote Wipe Permission Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                             Text(
                                 "Remote Wipe Permission",
                                 fontSize = 15.sp,
@@ -546,12 +390,7 @@ fun SettingsScreen(
                         Switch(
                             checked = state.remoteWipeEnabled,
                             onCheckedChange = viewModel::toggleRemoteWipe,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = GuardTeal,
-                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surface
-                            )
+                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
                         )
                     }
                 }
@@ -559,9 +398,9 @@ fun SettingsScreen(
                 Spacer(Modifier.height(24.dp))
 
                 // ──────────────────────────────────────────────
-                // 4. NOTIFICATIONS SECTION
+                // 4. NOTIFICATIONS & ESCALATION
                 // ──────────────────────────────────────────────
-                SettingsSectionHeader("NOTIFICATIONS")
+                SettingsSectionHeader("NOTIFICATIONS & ESCALATION")
 
                 Column(
                     modifier = Modifier
@@ -570,21 +409,21 @@ fun SettingsScreen(
                         .background(PanelDark)
                         .padding(20.dp)
                 ) {
-                    // Escalation SMS toggle (off by default)
+                    // Escalation SMS Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                             Text(
-                                "Escalation SMS Alerts",
+                                "Escalation SMS",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = TextPrimary
                             )
                             Text(
-                                "Send emergency SMS alert to trusted contacts on threat trigger (off by default)",
+                                "Send emergency SMS to trusted contacts on threat",
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
@@ -592,12 +431,7 @@ fun SettingsScreen(
                         Switch(
                             checked = state.escalationSmsEnabled,
                             onCheckedChange = viewModel::toggleEscalationSms,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = GuardTeal,
-                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surface
-                            )
+                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
                         )
                     }
 
@@ -605,21 +439,21 @@ fun SettingsScreen(
                     HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
                     Spacer(Modifier.height(14.dp))
 
-                    // Silence Email toggle (off by default)
+                    // Silent Email Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                             Text(
-                                "Silence Email Alerts",
+                                "Silent Email Alert",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = TextPrimary
                             )
                             Text(
-                                "Send stealth email notification with location/photo on threat trigger (off by default)",
+                                "Send discreet email notifications to account",
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
@@ -627,12 +461,7 @@ fun SettingsScreen(
                         Switch(
                             checked = state.silenceEmailEnabled,
                             onCheckedChange = viewModel::toggleSilenceEmail,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = GuardTeal,
-                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = MaterialTheme.colorScheme.surface
-                            )
+                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
                         )
                     }
                 }
@@ -640,7 +469,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(24.dp))
 
                 // ──────────────────────────────────────────────
-                // 5. SECURITY SECTION
+                // 5. SECURITY & ADMIN SECTION
                 // ──────────────────────────────────────────────
                 SettingsSectionHeader("SECURITY & ADMIN")
 
@@ -760,10 +589,86 @@ fun SettingsScreen(
                         }
 
                         OutlinedButton(
-                            onClick = { showPinDialog = true },
+                            onClick = {
+                                oldPinInput = ""
+                                newPinInput = ""
+                                confirmNewPinInput = ""
+                                pinError = null
+                                showPinDialog = true
+                            },
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(if (state.hasAppPin) "Change PIN" else "Set PIN", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
+                    Spacer(Modifier.height(14.dp))
+
+                    // Auto-wipe on 10 failed PIN attempts
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                "Auto-Wipe on PIN Failures",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                "Self-wipe app data after 10 failed PIN attempts",
+                                fontSize = 12.sp,
+                                color = TextMuted
+                            )
+                        }
+                        Switch(
+                            checked = state.autoWipeEnabled,
+                            onCheckedChange = viewModel::toggleAutoWipe,
+                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
+                        )
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
+                    Spacer(Modifier.height(14.dp))
+
+                    // Wipe App Data button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                "Wipe App Data",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = AlertRed
+                            )
+                            Text(
+                                "Requires PIN & confirmation text",
+                                fontSize = 12.sp,
+                                color = TextMuted
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                wipePinInput = ""
+                                wipeDeleteInput = ""
+                                wipeError = null
+                                showWipeDataDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AlertRed.copy(alpha = 0.15f),
+                                contentColor = AlertRed
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Wipe Data", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -883,6 +788,117 @@ fun SettingsScreen(
 
                     Spacer(Modifier.height(24.dp))
                 }
+
+                // ──────────────────────────────────────────────
+                // ABOUT & LIMITATIONS
+                // ──────────────────────────────────────────────
+                SettingsSectionHeader("ABOUT & LIMITATIONS")
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(PanelDark)
+                        .padding(20.dp)
+                ) {
+                    Text(
+                        "PhoneGuard v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) [${BuildConfig.BUILD_TYPE}]",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Backend URL: ${mw.phoneguard.app.data.api.ApiClient.BASE_URL}",
+                        fontSize = 12.sp,
+                        color = TextMuted
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Device ID: ${mw.phoneguard.app.data.storage.TokenStore.get(context).getDeviceId() ?: "Not registered"}",
+                        fontSize = 12.sp,
+                        color = TextMuted
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+                    HorizontalDivider(color = LineColor)
+                    Spacer(Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                "Send crash reports",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                "Automatically email crash reports to developer when unhandled exceptions occur.",
+                                fontSize = 11.sp,
+                                color = TextMuted
+                            )
+                        }
+                        Switch(
+                            checked = state.crashReportConsent,
+                            onCheckedChange = { viewModel.toggleCrashReportConsent(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = GuardTeal,
+                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f)
+                            )
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+                    HorizontalDivider(color = LineColor)
+                    Spacer(Modifier.height(16.dp))
+
+                    Text(
+                        "What PhoneGuard Cannot Do (Limitations):",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "• Cannot prevent physical theft or armed robbery (protects against snatching and unauthorized access attempts).\n" +
+                                "• Cannot bypass OS-level hardware security or kernel compromises.\n" +
+                                "• Cannot recover a device if powered off before snatch detection triggers or if factory reset is performed externally.\n" +
+                                "• Cannot guarantee network delivery of evidence if device is in a 100% Faraday / zero-signal zone.\n" +
+                                "• Cannot replace proper operational physical security practices.",
+                        fontSize = 11.sp,
+                        color = TextMuted,
+                        lineHeight = 16.sp
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+                    HorizontalDivider(color = LineColor)
+                    Spacer(Modifier.height(16.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                                data = android.net.Uri.parse("mailto:eleazartoto50@gmail.com")
+                                putExtra(Intent.EXTRA_SUBJECT, "PhoneGuard Feedback")
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "No email client found", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = GuardTeal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Send Developer Feedback", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
             }
         }
 
@@ -984,20 +1000,145 @@ fun SettingsScreen(
         )
     }
 
-    // Set/Change PIN Dialog
+    // Logout Confirmation Dialog (Requirement 15f)
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = {
+                Text("Log Out", fontWeight = FontWeight.Bold, color = TextPrimary)
+            },
+            text = {
+                Text(
+                    "Are you sure? You'll need your email and password to log back in.",
+                    fontSize = 13.sp,
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutDialog = false
+                        AppSessionManager.lock()
+                        onLogout()
+                    }
+                ) {
+                    Text("Log Out", color = AlertRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = PanelDark
+        )
+    }
+
+    // Wipe App Data Dialog (Requirement 15f)
+    if (showWipeDataDialog) {
+        AlertDialog(
+            onDismissRequest = { showWipeDataDialog = false },
+            title = {
+                Text("Wipe App Data", fontWeight = FontWeight.Bold, color = TextPrimary)
+            },
+            text = {
+                Column {
+                    Text("This will permanently delete all local app data, logs, and settings. Enter your App PIN and type DELETE to confirm:", fontSize = 12.sp, color = TextMuted)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = wipePinInput,
+                        onValueChange = { wipePinInput = it },
+                        label = { Text("App PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GuardTeal,
+                            unfocusedBorderColor = LineColor
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = wipeDeleteInput,
+                        onValueChange = { wipeDeleteInput = it },
+                        label = { Text("Type DELETE") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GuardTeal,
+                            unfocusedBorderColor = LineColor
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (wipeError != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(wipeError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (wipeDeleteInput != "DELETE") {
+                            wipeError = "Must type DELETE"
+                            return@TextButton
+                        }
+                        viewModel.wipeAppDataWithPin(wipePinInput.trim()) { success, msg ->
+                            if (success) {
+                                showWipeDataDialog = false
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                AppSessionManager.lock()
+                                onLogout()
+                            } else {
+                                wipeError = msg
+                            }
+                        }
+                    }
+                ) {
+                    Text("Wipe Data", color = AlertRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWipeDataDialog = false }) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = PanelDark
+        )
+    }
+
+    // Set/Change PIN Dialog (Requirement 15e)
     if (showPinDialog) {
         AlertDialog(
             onDismissRequest = { showPinDialog = false },
             title = {
-                Text("Set PhoneGuard App PIN", fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text(if (state.hasAppPin) "Change App PIN" else "Set App PIN", fontWeight = FontWeight.Bold, color = TextPrimary)
             },
             text = {
                 Column {
-                    Text("Enter local app PIN to secure settings and unlock overrides:", fontSize = 12.sp, color = TextMuted)
-                    Spacer(Modifier.height(12.dp))
+                    if (state.hasAppPin) {
+                        Text("Enter current (OLD) PIN:", fontSize = 12.sp, color = TextMuted)
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = oldPinInput,
+                            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) oldPinInput = it },
+                            label = { Text("Old PIN") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = GuardTeal,
+                                unfocusedBorderColor = LineColor
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
+                    Text("Enter new PIN (4-6 digits):", fontSize = 12.sp, color = TextMuted)
+                    Spacer(Modifier.height(6.dp))
                     OutlinedTextField(
-                        value = pinInput,
-                        onValueChange = { pinInput = it },
+                        value = newPinInput,
+                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) newPinInput = it },
                         label = { Text("New PIN") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
@@ -1008,17 +1149,46 @@ fun SettingsScreen(
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = confirmNewPinInput,
+                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) confirmNewPinInput = it },
+                        label = { Text("Confirm New PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GuardTeal,
+                            unfocusedBorderColor = LineColor
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (pinError != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(pinError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        if (pinInput.isNotBlank()) {
-                            showPinDialog = false
-                            viewModel.saveAppPin(pinInput.trim())
-                            Toast.makeText(context, "PhoneGuard PIN saved", Toast.LENGTH_SHORT).show()
-                            pinInput = ""
+                        if (state.hasAppPin) {
+                            if (!viewModel.verifyOldPin(oldPinInput)) {
+                                pinError = "Incorrect old PIN"
+                                return@TextButton
+                            }
                         }
+                        if (newPinInput.length !in 4..6) {
+                            pinError = "New PIN must be 4-6 digits"
+                            return@TextButton
+                        }
+                        if (newPinInput != confirmNewPinInput) {
+                            pinError = "New PINs do not match"
+                            return@TextButton
+                        }
+                        showPinDialog = false
+                        viewModel.saveAppPin(newPinInput.trim())
+                        Toast.makeText(context, "App PIN updated successfully", Toast.LENGTH_SHORT).show()
                     }
                 ) {
                     Text("Save", color = GuardTeal, fontWeight = FontWeight.Bold)

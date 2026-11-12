@@ -52,4 +52,25 @@ class EmailService(config: ApplicationConfig) {
             Transport.send(message)
         }
     }
+
+    suspend fun sendNewDeviceVerificationCode(to: String, code: String) {
+        withContext(Dispatchers.IO) {
+            val message = MimeMessage(session).apply {
+                setFrom(InternetAddress(smtpUser, fromName))
+                setRecipients(Message.RecipientType.TO, InternetAddress.parse(to))
+                subject = "PhoneGuard New Device Verification Code"
+                setText("""
+                    Hello,
+                    
+                    A login attempt was detected from a new device.
+                    Your PhoneGuard verification code is:
+                    
+                    $code
+                    
+                    This code expires in 15 minutes. If you did not attempt to log in, please secure your account.
+                """.trimIndent(), "utf-8")
+            }
+            Transport.send(message)
+        }
+    }
 }

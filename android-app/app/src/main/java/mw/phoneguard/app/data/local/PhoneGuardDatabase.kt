@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [EventEntity::class, ContactEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class PhoneGuardDatabase : RoomDatabase() {

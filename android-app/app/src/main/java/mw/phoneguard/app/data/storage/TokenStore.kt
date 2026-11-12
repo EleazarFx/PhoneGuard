@@ -8,17 +8,21 @@ import androidx.security.crypto.MasterKey
 class TokenStore private constructor(context: Context) {
 
     private val prefs: SharedPreferences by lazy {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
+        try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
 
-        EncryptedSharedPreferences.create(
-            context,
-            "phoneguard_secure_prefs",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+            EncryptedSharedPreferences.create(
+                context,
+                "phoneguard_secure_prefs",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            context.getSharedPreferences("phoneguard_secure_prefs_fallback", Context.MODE_PRIVATE)
+        }
     }
     fun saveUserTokens(accessToken: String, refreshToken: String) {
         prefs.edit()
@@ -133,6 +137,21 @@ class TokenStore private constructor(context: Context) {
         prefs.edit().remove(KEY_LAST_LOCK_TIME).apply()
     }
 
+    fun getTamperCount(): Int = prefs.getInt(KEY_TAMPER_COUNT, 0)
+    fun incrementTamperCount(): Int {
+        val current = getTamperCount() + 1
+        prefs.edit().putInt(KEY_TAMPER_COUNT, current).apply()
+        return current
+    }
+    fun resetTamperCount() {
+        prefs.edit().putInt(KEY_TAMPER_COUNT, 0).apply()
+    }
+
+    fun getLastCheckInTime(): Long = prefs.getLong(KEY_LAST_CHECK_IN, System.currentTimeMillis())
+    fun saveLastCheckInTime(time: Long) {
+        prefs.edit().putLong(KEY_LAST_CHECK_IN, time).apply()
+    }
+
 
     fun saveAlertModeArmed(armed: Boolean) {
         prefs.edit().putBoolean(KEY_ALERT_MODE_ARMED, armed).apply()
@@ -192,6 +211,30 @@ class TokenStore private constructor(context: Context) {
     fun saveAppPin(pin: String) = prefs.edit().putString(KEY_APP_PIN, pin).apply()
     fun hasAppPin(): Boolean = !getAppPin().isNullOrEmpty()
 
+    fun getPinFailedAttempts(): Int = prefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0)
+    fun savePinFailedAttempts(attempts: Int) = prefs.edit().putInt(KEY_PIN_FAILED_ATTEMPTS, attempts).apply()
+    fun incrementPinFailedAttempts(): Int {
+        val current = getPinFailedAttempts() + 1
+        savePinFailedAttempts(current)
+        return current
+    }
+    fun resetPinFailedAttempts() {
+        prefs.edit()
+            .remove(KEY_PIN_FAILED_ATTEMPTS)
+            .remove(KEY_PIN_LOCKOUT_UNTIL)
+            .remove(KEY_PIN_FIRST_FAILURE_TIME)
+            .apply()
+    }
+
+    fun getPinLockoutUntil(): Long = prefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+    fun savePinLockoutUntil(timestamp: Long) = prefs.edit().putLong(KEY_PIN_LOCKOUT_UNTIL, timestamp).apply()
+
+    fun getPinFirstFailureTime(): Long = prefs.getLong(KEY_PIN_FIRST_FAILURE_TIME, 0L)
+    fun savePinFirstFailureTime(timestamp: Long) = prefs.edit().putLong(KEY_PIN_FIRST_FAILURE_TIME, timestamp).apply()
+
+    fun isAutoWipeOnPinFailureEnabled(): Boolean = prefs.getBoolean(KEY_AUTO_WIPE_ON_PIN_FAILURE, false)
+    fun saveAutoWipeOnPinFailureEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_AUTO_WIPE_ON_PIN_FAILURE, enabled).apply()
+
     fun getGracePeriodSeconds(): Int = prefs.getInt(KEY_GRACE_PERIOD_SECONDS, 20)
     fun saveGracePeriodSeconds(seconds: Int) = prefs.edit().putInt(KEY_GRACE_PERIOD_SECONDS, seconds).apply()
 
@@ -214,6 +257,9 @@ class TokenStore private constructor(context: Context) {
             .putInt(KEY_SCHEDULED_END_MINUTE, endMinute)
             .apply()
     }
+
+    fun getCrashReportConsent(): Boolean = prefs.getBoolean("key_crash_consent", false)
+    fun setCrashReportConsent(enabled: Boolean) = prefs.edit().putBoolean("key_crash_consent", enabled).apply()
 
     companion object {
         @Volatile
@@ -241,6 +287,8 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_ORIGINAL_SIM_SUBSCRIPTIONS = "original_sim_subscriptions"
         private const val KEY_LAST_ALERTED_SIM_CODES = "last_alerted_sim_codes"
         private const val KEY_LAST_LOCK_TIME = "last_lock_time"
+        private const val KEY_TAMPER_COUNT = "tamper_count"
+        private const val KEY_LAST_CHECK_IN = "last_check_in_time"
 
         private const val KEY_ALERT_MODE_ARMED = "alert_mode_armed"
         private const val KEY_TRUSTED_CONTACTS = "trusted_contacts_set"
@@ -257,6 +305,10 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_SILENCE_EMAIL = "opt_in_silence_email"
         private const val KEY_DEVICE_IMEI = "device_imei"
         private const val KEY_APP_PIN = "app_local_pin"
+        private const val KEY_PIN_FAILED_ATTEMPTS = "pin_failed_attempts"
+        private const val KEY_PIN_LOCKOUT_UNTIL = "pin_lockout_until"
+        private const val KEY_PIN_FIRST_FAILURE_TIME = "pin_first_failure_time"
+        private const val KEY_AUTO_WIPE_ON_PIN_FAILURE = "auto_wipe_on_pin_failure"
 
         private const val KEY_GRACE_PERIOD_SECONDS = "grace_period_seconds"
         private const val KEY_MOTION_SENSITIVITY = "motion_sensitivity"

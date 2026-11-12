@@ -10,6 +10,8 @@ import kotlinx.coroutines.launch
 import mw.phoneguard.app.data.api.ApiResult
 import mw.phoneguard.app.data.api.AuthApi
 import mw.phoneguard.app.data.api.DeviceApi
+import mw.phoneguard.app.data.api.LoginApiResult
+import mw.phoneguard.app.data.models.DeviceInfo
 import mw.phoneguard.app.data.storage.TokenStore
 import mw.phoneguard.app.services.PhoneGuardService
 
@@ -24,6 +26,9 @@ data class AuthUiState(
     val email: String = "",
     val password: String = "",
     val otpCode: String = "",
+    val verificationCode: String = "",
+    val verificationMessage: String? = null,
+    val isVerificationRequired: Boolean = false,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val isLoggedIn: Boolean = false,
@@ -55,8 +60,23 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
         _uiState.value = _uiState.value.copy(password = newPassword, errorMessage = null)
     }
 
+    fun onVerificationCodeChange(newCode: String) {
+        _uiState.value = _uiState.value.copy(verificationCode = newCode, errorMessage = null)
+    }
 
-
+    private fun getDeviceInfo(): DeviceInfo {
+        val androidId = try {
+            android.provider.Settings.Secure.getString(
+                application.contentResolver,
+                android.provider.Settings.Secure.ANDROID_ID
+            )
+        } catch (_: Exception) { null }
+        return DeviceInfo(
+            model = android.os.Build.MODEL,
+            manufacturer = android.os.Build.MANUFACTURER,
+            androidId = androidId
+        )
+    }
 
     fun login() {
         val state = _uiState.value
@@ -68,27 +88,34 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
 
-            when (val result = authApi.login(state.email, state.password)) {
+            when (val result = authApi.login(state.email, state.password, getDeviceInfo())) {
                 is ApiResult.Success -> {
-                    tokenStore.saveUserTokens(result.value.accessToken, result.value.refreshToken)
-                    tokenStore.saveUserEmail(state.email)
+                    when (val loginResult = result.value) {
+                        is LoginApiResult.Success -> {
+                            tokenStore.saveUserTokens(loginResult.response.accessToken, loginResult.response.refreshToken)
+                            tokenStore.saveUserEmail(state.email)
 
-                    // After login, ensure this phone is registered as a device.
-                    ensureDeviceRegistered(result.value.accessToken, state.email)
+                            ensureDeviceRegistered(loginResult.response.accessToken, state.email)
+                            saveCurrentSimIdentity(application)
+                            startProtectionService()
 
-                    // Save current SIM identity on first login so we can detect future swaps
-                    saveCurrentSimIdentity(application)
-
-                    startProtectionService()
-
-
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        isLoggedIn = true,
-                        isDeviceRegistered = tokenStore.hasDeviceRegistered(),
-                        userEmail = state.email,
-                        errorMessage = null
-                    )
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                isLoggedIn = true,
+                                isDeviceRegistered = tokenStore.hasDeviceRegistered(),
+                                userEmail = state.email,
+                                errorMessage = null
+                            )
+                        }
+                        is LoginApiResult.VerificationRequired -> {
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                isVerificationRequired = true,
+                                verificationMessage = loginResult.message,
+                                errorMessage = null
+                            )
+                        }
+                    }
                 }
 
                 is ApiResult.Failure -> {
@@ -99,6 +126,74 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
                 }
             }
         }
+    }
+
+    fun verifyNewDevice() {
+        val state = _uiState.value
+        if (state.verificationCode.length != 6) {
+            _uiState.value = state.copy(errorMessage = "Enter the 6-digit verification code")
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value = state.copy(isLoading = true, errorMessage = null)
+
+            when (val result = authApi.verifyNewDevice(state.email, state.verificationCode, getDeviceInfo())) {
+                is ApiResult.Success -> {
+                    tokenStore.saveUserTokens(result.value.accessToken, result.value.refreshToken)
+                    tokenStore.saveUserEmail(state.email)
+
+                    ensureDeviceRegistered(result.value.accessToken, state.email)
+                    saveCurrentSimIdentity(application)
+                    startProtectionService()
+
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isLoggedIn = true,
+                        isVerificationRequired = false,
+                        isDeviceRegistered = tokenStore.hasDeviceRegistered(),
+                        userEmail = state.email,
+                        verificationCode = "",
+                        errorMessage = null
+                    )
+                }
+                is ApiResult.Failure -> {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = result.message
+                    )
+                }
+            }
+        }
+    }
+
+    fun resendVerificationCode() {
+        val state = _uiState.value
+        viewModelScope.launch {
+            _uiState.value = state.copy(isLoading = true, errorMessage = null)
+            when (val result = authApi.login(state.email, state.password, getDeviceInfo())) {
+                is ApiResult.Success -> {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = "New verification code sent to email."
+                    )
+                }
+                is ApiResult.Failure -> {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = result.message
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelVerification() {
+        _uiState.value = _uiState.value.copy(
+            isVerificationRequired = false,
+            verificationCode = "",
+            errorMessage = null
+        )
     }
 
     fun registerAndLogin() {
@@ -119,7 +214,6 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
 
-            // Register first. If the email is taken, we get a Failure and stop.
             val registerResult = authApi.register(state.email, state.password)
             if (registerResult is ApiResult.Failure) {
                 _uiState.value = _uiState.value.copy(
@@ -129,26 +223,34 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
                 return@launch
             }
 
-            // Then log in — this gives us tokens.
-            when (val loginResult = authApi.login(state.email, state.password)) {
+            when (val loginResult = authApi.login(state.email, state.password, getDeviceInfo())) {
                 is ApiResult.Success -> {
-                    tokenStore.saveUserTokens(loginResult.value.accessToken, loginResult.value.refreshToken)
-                    tokenStore.saveUserEmail(state.email)
+                    when (val res = loginResult.value) {
+                        is LoginApiResult.Success -> {
+                            tokenStore.saveUserTokens(res.response.accessToken, res.response.refreshToken)
+                            tokenStore.saveUserEmail(state.email)
 
-                    ensureDeviceRegistered(loginResult.value.accessToken, state.email)
+                            ensureDeviceRegistered(res.response.accessToken, state.email)
+                            saveCurrentSimIdentity(application)
+                            startProtectionService()
 
-                    // Save current SIM identity on first login so we can detect future swaps
-                    saveCurrentSimIdentity(application)
-
-                    startProtectionService()
-
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        isLoggedIn = true,
-                        isDeviceRegistered = tokenStore.hasDeviceRegistered(),
-                        userEmail = state.email,
-                        errorMessage = null
-                    )
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                isLoggedIn = true,
+                                isDeviceRegistered = tokenStore.hasDeviceRegistered(),
+                                userEmail = state.email,
+                                errorMessage = null
+                            )
+                        }
+                        is LoginApiResult.VerificationRequired -> {
+                            _uiState.value = _uiState.value.copy(
+                                isLoading = false,
+                                isVerificationRequired = true,
+                                verificationMessage = res.message,
+                                errorMessage = null
+                            )
+                        }
+                    }
                 }
                 is ApiResult.Failure -> {
                     _uiState.value = _uiState.value.copy(
@@ -160,11 +262,6 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
         }
     }
 
-    /**
-     * Registers this phone as a device if it isn't already.
-     * Runs after login, but failures here are not fatal — the user can
-     * retry later from the home screen.
-     */
     private suspend fun ensureDeviceRegistered(userToken: String, email: String) {
         if (tokenStore.hasDeviceRegistered()) return
 
@@ -184,13 +281,6 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
         tokenStore.clearUserSession()
         _uiState.value = AuthUiState()
     }
-
-
-
-
-
-
-
 
     fun onOtpChange(newOtp: String) {
         _uiState.value = _uiState.value.copy(otpCode = newOtp, errorMessage = null)
@@ -269,8 +359,6 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
         }
     }
 
-
-
     private fun saveCurrentSimIdentity(context: android.content.Context) {
         try {
             val tm = context.getSystemService(android.content.Context.TELEPHONY_SERVICE)
@@ -343,13 +431,11 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
                 }
             }
         } catch (_: SecurityException) {
-            // READ_PHONE_STATE permission not granted
         } catch (e: Exception) {
             android.util.Log.w("AuthViewModel", "SubscriptionManager query failed: ${e.message}")
         }
         return ""
     }
-
 
     private fun startProtectionService() {
         val context = getApplication<android.app.Application>()
@@ -360,8 +446,4 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
             android.util.Log.e("AuthViewModel", "Failed to start service: ${e.message}", e)
         }
     }
-
-
-
-
 }
