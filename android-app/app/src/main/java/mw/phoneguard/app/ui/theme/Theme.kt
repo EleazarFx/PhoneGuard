@@ -13,14 +13,14 @@ import androidx.core.view.WindowCompat
 private val PhoneGuardColorScheme = darkColorScheme(
     primary = GuardTeal,
     onPrimary = BackgroundBlack,
-    secondary = TextMuted,
+    secondary = TextSecondary,
     onSecondary = TextPrimary,
     background = BackgroundBlack,
     onBackground = TextPrimary,
     surface = PanelDark,
     onSurface = TextPrimary,
     surfaceVariant = PanelLight,
-    onSurfaceVariant = TextMuted,
+    onSurfaceVariant = TextSecondary,
     error = AlertRed,
     onError = TextPrimary,
     outline = LineColor
@@ -28,19 +28,20 @@ private val PhoneGuardColorScheme = darkColorScheme(
 
 @Composable
 fun PhoneGuardTheme(
-    // We default to dark mode because it's a security app,
-    // but allow overriding it if needed later.
     darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = PhoneGuardColorScheme // Force our custom scheme always
+    val colorScheme = PhoneGuardColorScheme
 
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
             window.statusBarColor = colorScheme.background.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
+            window.navigationBarColor = colorScheme.background.toArgb()
+            val insetsController = WindowCompat.getInsetsController(window, view)
+            insetsController.isAppearanceLightStatusBars = false
+            insetsController.isAppearanceLightNavigationBars = false
         }
     }
 
