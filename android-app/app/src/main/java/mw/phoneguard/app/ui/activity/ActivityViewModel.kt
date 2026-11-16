@@ -16,7 +16,6 @@ import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
 import mw.phoneguard.app.data.sync.SyncManager
 import java.io.File
-import java.io.FileOutputStream
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -131,101 +130,7 @@ class ActivityViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun seedSampleEvents() {
-        viewModelScope.launch {
-            val deviceId = tokenStore.getDeviceId() ?: "demo_device"
-            val now = System.currentTimeMillis()
-            val oneDayMs = 24 * 60 * 60 * 1000L
 
-            createSamplePhotoIfMissing("evt_today_1")
-            createSamplePhotoIfMissing("evt_today_2")
-
-            val sampleEvents = listOf(
-                EventEntity(
-                    id = "evt_today_1",
-                    deviceId = deviceId,
-                    type = "wrong_pin",
-                    timestamp = now - (20 * 60 * 1000L),
-                    lat = -15.7861,
-                    lng = 35.0058,
-                    accuracy = 12.0,
-                    battery = 88,
-                    captureStatus = "captured",
-                    photoSha256 = "dummy_sha_1",
-                    syncedAt = null,
-                    isPreserved = false
-                ),
-                EventEntity(
-                    id = "evt_today_2",
-                    deviceId = deviceId,
-                    type = "snatch",
-                    timestamp = now - (3 * 3600 * 1000L),
-                    lat = -15.7865,
-                    lng = 35.0062,
-                    accuracy = 8.0,
-                    battery = 84,
-                    captureStatus = "captured",
-                    photoSha256 = "dummy_sha_2",
-                    syncedAt = now - (2 * 3600 * 1000L),
-                    isPreserved = true
-                ),
-                EventEntity(
-                    id = "evt_yesterday_1",
-                    deviceId = deviceId,
-                    type = "sim_change",
-                    timestamp = now - oneDayMs - (2 * 3600 * 1000L),
-                    lat = -15.7870,
-                    lng = 35.0070,
-                    accuracy = 15.0,
-                    battery = 72,
-                    captureStatus = "no_face",
-                    syncedAt = null,
-                    isPreserved = false
-                ),
-                EventEntity(
-                    id = "evt_older_1",
-                    deviceId = deviceId,
-                    type = "tamper",
-                    timestamp = now - (5 * oneDayMs),
-                    lat = -15.7880,
-                    lng = 35.0080,
-                    accuracy = 20.0,
-                    battery = 60,
-                    captureStatus = "back_fallback",
-                    syncedAt = now - (5 * oneDayMs - 1000L),
-                    isPreserved = false
-                )
-            )
-
-            for (event in sampleEvents) {
-                db.eventDao().upsert(event)
-            }
-        }
-    }
-
-    private fun createSamplePhotoIfMissing(eventId: String) {
-        try {
-            val capturesDir = File(getApplication<Application>().filesDir, "captures")
-            if (!capturesDir.exists()) capturesDir.mkdirs()
-            val file = File(capturesDir, "$eventId.jpg")
-            if (!file.exists()) {
-                val bitmap = android.graphics.Bitmap.createBitmap(200, 200, android.graphics.Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(bitmap)
-                val paint = android.graphics.Paint()
-                paint.color = android.graphics.Color.DKGRAY
-                canvas.drawRect(0f, 0f, 200f, 200f, paint)
-                paint.color = android.graphics.Color.GREEN
-                paint.textSize = 28f
-                canvas.drawText("EVIDENCE", 30f, 110f, paint)
-                val out = FileOutputStream(file)
-                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
-                out.flush()
-                out.close()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to create sample photo", e)
-        }
-    }
 
     fun refresh() {
         viewModelScope.launch {

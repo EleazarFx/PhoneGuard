@@ -1,24 +1,19 @@
 package mw.phoneguard.app.data.api
 
-import android.content.Context
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.client.request.forms.MultiPartFormDataContent
-import io.ktor.client.request.forms.formData
 import io.ktor.client.statement.HttpResponse
-import io.ktor.http.Headers
-import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import mw.phoneguard.app.data.models.CommandResponse
 import mw.phoneguard.app.data.models.CommandStatusRequest
+import mw.phoneguard.app.data.models.PostEventRequest
 import mw.phoneguard.app.data.models.RegisterDeviceRequest
 import mw.phoneguard.app.data.models.RegisterDeviceResponse
-import java.io.File
 
-class DeviceApi(private val context: Context? = null) {
+class DeviceApi(private val context: android.content.Context? = null) {
 
     private val client = ApiClient.http
 
@@ -59,47 +54,21 @@ class DeviceApi(private val context: Context? = null) {
         event: mw.phoneguard.app.data.local.EventEntity
     ): ApiResult<Unit> {
         return try {
-            val photoFile = context?.let { File(it.filesDir, "captures/${event.id}.jpg") }
-            val response: HttpResponse = if (photoFile != null && photoFile.exists()) {
-                client.post("${ApiClient.BASE_URL}/device/$deviceId/events") {
-                    header("Authorization", "Bearer $deviceToken")
-                    setBody(
-                        MultiPartFormDataContent(
-                            formData {
-                                append("type", event.type)
-                                append("timestamp", event.timestamp.toString())
-                                if (event.lat != null) append("lat", event.lat.toString())
-                                if (event.lng != null) append("lng", event.lng.toString())
-                                if (event.accuracy != null) append("accuracy", event.accuracy.toString())
-                                if (event.battery != null) append("battery", event.battery.toString())
-                                if (event.captureStatus != null) append("captureStatus", event.captureStatus)
-                                if (event.photoSha256 != null) append("photoSha256", event.photoSha256)
-                                if (event.clientSeq != null) append("clientSeq", event.clientSeq.toString())
-                                append("photo", photoFile.readBytes(), Headers.build {
-                                    append(HttpHeaders.ContentType, "image/jpeg")
-                                    append(HttpHeaders.ContentDisposition, "filename=\"${event.id}.jpg\"")
-                                })
-                            }
-                        )
+            val response: HttpResponse = client.post("${ApiClient.BASE_URL}/device/$deviceId/events") {
+                header("Authorization", "Bearer $deviceToken")
+                setBody(
+                    PostEventRequest(
+                        type = event.type,
+                        timestamp = event.timestamp,
+                        lat = event.lat,
+                        lng = event.lng,
+                        accuracy = event.accuracy,
+                        battery = event.battery,
+                        captureStatus = event.captureStatus,
+                        photoSha256 = event.photoSha256,
+                        clientSeq = event.clientSeq
                     )
-                }
-            } else {
-                client.post("${ApiClient.BASE_URL}/device/$deviceId/events") {
-                    header("Authorization", "Bearer $deviceToken")
-                    setBody(
-                        mw.phoneguard.app.data.models.PostEventRequest(
-                            type = event.type,
-                            timestamp = event.timestamp,
-                            lat = event.lat,
-                            lng = event.lng,
-                            accuracy = event.accuracy,
-                            battery = event.battery,
-                            captureStatus = event.captureStatus,
-                            photoSha256 = event.photoSha256,
-                            clientSeq = event.clientSeq
-                        )
-                    )
-                }
+                )
             }
 
             if (response.status == HttpStatusCode.Created || response.status == HttpStatusCode.OK) {

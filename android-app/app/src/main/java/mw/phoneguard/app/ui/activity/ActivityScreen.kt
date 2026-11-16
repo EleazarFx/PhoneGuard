@@ -129,8 +129,7 @@ fun ActivityScreen(
                         if (allEvents.isEmpty()) {
                             EmptyStateView(
                                 message = "No events yet. When a theft trigger fires, evidence will appear here.",
-                                icon = Icons.Default.Shield,
-                                onSeedClick = viewModel::seedSampleEvents
+                                icon = Icons.Default.Shield
                             )
                         } else if (filteredEvents.isEmpty()) {
                             EmptyStateView(
@@ -283,8 +282,7 @@ private fun DateHeader(title: String) {
 @Composable
 private fun EmptyStateView(
     message: String,
-    icon: ImageVector,
-    onSeedClick: (() -> Unit)? = null
+    icon: ImageVector
 ) {
     Box(
         modifier = Modifier
@@ -310,23 +308,6 @@ private fun EmptyStateView(
                 textAlign = TextAlign.Center,
                 lineHeight = 22.sp
             )
-            if (onSeedClick != null) {
-                Spacer(Modifier.height(20.dp))
-                OutlinedButton(
-                    onClick = onSeedClick,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GuardTeal),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, GuardTeal.copy(alpha = 0.6f)),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AddCircleOutline,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Add Demo Events", fontWeight = FontWeight.Bold)
-                }
-            }
         }
     }
 }

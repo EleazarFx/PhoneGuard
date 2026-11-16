@@ -70,6 +70,26 @@ class MainActivity : ComponentActivity() {
         }
         cameraLauncher.launch(Manifest.permission.CAMERA)
 
+        // Ask for location permissions for evidence & tracking
+        val locationLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+            val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+            if (!fineGranted && !coarseGranted) {
+                android.util.Log.w(
+                    "PhoneGuard",
+                    "LOCATION permissions denied — evidence location and tracking will be disabled"
+                )
+            }
+        }
+        locationLauncher.launch(
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+        )
+
         setContent {
             PhoneGuardTheme {
                 PhoneGuardApp(authViewModel, homeViewModel)
@@ -82,134 +102,94 @@ class MainActivity : ComponentActivity() {
 fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
     val state by authViewModel.uiState.collectAsState()
     val context = LocalContext.current
-    val tokenStore = remember { TokenStore.get(context) }
 
     var showRegister by remember { mutableStateOf(false) }
     var currentScreen by remember { mutableStateOf(AppScreen.Home) }
-    var pinSetupTrigger by remember { mutableStateOf(0) }
-    var sessionTrigger by remember { mutableStateOf(0) }
 
-    val isUnlocked by AppSessionManager.isUnlocked.collectAsState()
-    val hasPin = remember(state.isLoggedIn, pinSetupTrigger) { tokenStore.hasAppPin() }
-
-    // Detect user interactions to touch session timer
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        AppSessionManager.touch()
-                    }
-                )
-            }
+        modifier = Modifier.fillMaxSize()
     ) {
         when {
             state.isLoggedIn -> {
-                when {
-                    !hasPin -> {
-                        PinSetupScreen(
-                            onPinSetupComplete = {
-                                AppSessionManager.unlock(tokenStore.getAppPin() ?: "", context) // auto unlock or set
-                                pinSetupTrigger++
+                val homeState by homeViewModel.uiState.collectAsState()
+
+                LaunchedEffect(Unit) {
+                    homeViewModel.triggerSync()
+                    mw.phoneguard.app.services.PhoneGuardService.start(context)
+                }
+
+                when (currentScreen) {
+                    AppScreen.Home -> HomeScreen(
+                        userEmail = homeState.userEmail,
+                        deviceRegistered = homeState.deviceRegistered,
+                        isAdminActive = homeState.isAdminActive,
+                        alertModeArmed = homeState.alertModeArmed,
+                        lastCheckIn = homeState.lastCheckInText,
+                        trustedContactsCount = homeState.trustedContactsCount,
+                        unsyncedEventCount = homeState.unsyncedEventCount,
+                        onToggleAlertMode = homeViewModel::toggleAlertMode,
+                        onEnableAdminClick = {
+                            val adminComponent = ComponentName(
+                                context,
+                                PhoneGuardAdminReceiver::class.java
+                            )
+                            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+                                putExtra(
+                                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                    "PhoneGuard needs this to detect wrong lock-screen PIN attempts."
+                                )
                             }
+                            context.startActivity(intent)
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                homeViewModel.refreshAdminState()
+                            }, 1500)
+                        },
+                        onResetOriginalSim = {
+                            homeViewModel.resetOriginalSim { _, msg ->
+                                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onTestDecoyShutdown = {
+                            val intent = Intent(context, mw.phoneguard.app.services.DecoyShutdownActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        },
+                        onLogout = {
+                            authViewModel.logout()
+                        },
+                        onNavigate = { currentScreen = it },
+                        currentScreen = currentScreen,
+                        onRefresh = {
+                            homeViewModel.refresh()
+                            homeViewModel.refreshAdminState()
+                            homeViewModel.triggerSync()
+                        }
+                    )
+
+                    AppScreen.Activity -> {
+                        ActivityScreen(
+                            currentScreen = currentScreen,
+                            onNavigate = { currentScreen = it }
                         )
                     }
-                    !isUnlocked -> {
-                        PinEntryScreen(
-                            onUnlocked = {
-                                sessionTrigger++
-                            },
+
+                    AppScreen.Contacts -> {
+                        ContactsScreen(
+                            currentScreen = currentScreen,
+                            onNavigate = { currentScreen = it }
+                        )
+                    }
+
+                    AppScreen.Settings -> {
+                        SettingsScreen(
+                            currentScreen = currentScreen,
+                            onNavigate = { currentScreen = it },
                             onLogout = {
-                                AppSessionManager.lock()
                                 authViewModel.logout()
                             }
                         )
-                    }
-                    else -> {
-                        val homeState by homeViewModel.uiState.collectAsState()
-
-                        LaunchedEffect(Unit) {
-                            homeViewModel.triggerSync()
-                            mw.phoneguard.app.services.PhoneGuardService.start(context)
-                        }
-
-                        when (currentScreen) {
-                            AppScreen.Home -> HomeScreen(
-                                userEmail = homeState.userEmail,
-                                deviceRegistered = homeState.deviceRegistered,
-                                isAdminActive = homeState.isAdminActive,
-                                alertModeArmed = homeState.alertModeArmed,
-                                lastCheckIn = homeState.lastCheckInText,
-                                trustedContactsCount = homeState.trustedContactsCount,
-                                unsyncedEventCount = homeState.unsyncedEventCount,
-                                onToggleAlertMode = homeViewModel::toggleAlertMode,
-                                onEnableAdminClick = {
-                                    val adminComponent = ComponentName(
-                                        context,
-                                        PhoneGuardAdminReceiver::class.java
-                                    )
-                                    val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                                        putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
-                                        putExtra(
-                                            DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                            "PhoneGuard needs this to detect wrong lock-screen PIN attempts."
-                                        )
-                                    }
-                                    context.startActivity(intent)
-                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                        homeViewModel.refreshAdminState()
-                                    }, 1500)
-                                },
-                                onResetOriginalSim = {
-                                    homeViewModel.resetOriginalSim { _, msg ->
-                                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                onTestDecoyShutdown = {
-                                    val intent = Intent(context, mw.phoneguard.app.services.DecoyShutdownActivity::class.java).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(intent)
-                                },
-                                onLogout = {
-                                    AppSessionManager.lock()
-                                    authViewModel.logout()
-                                },
-                                onNavigate = { currentScreen = it },
-                                currentScreen = currentScreen,
-                                onRefresh = {
-                                    homeViewModel.refresh()
-                                    homeViewModel.refreshAdminState()
-                                    homeViewModel.triggerSync()
-                                }
-                            )
-
-                            AppScreen.Activity -> {
-                                ActivityScreen(
-                                    currentScreen = currentScreen,
-                                    onNavigate = { currentScreen = it }
-                                )
-                            }
-
-                            AppScreen.Contacts -> {
-                                ContactsScreen(
-                                    currentScreen = currentScreen,
-                                    onNavigate = { currentScreen = it }
-                                )
-                            }
-
-                            AppScreen.Settings -> {
-                                SettingsScreen(
-                                    currentScreen = currentScreen,
-                                    onNavigate = { currentScreen = it },
-                                    onLogout = {
-                                        AppSessionManager.lock()
-                                        authViewModel.logout()
-                                    }
-                                )
-                            }
-                        }
                     }
                 }
             }

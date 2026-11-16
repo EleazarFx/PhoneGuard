@@ -81,18 +81,10 @@ fun SettingsScreen(
     var showDeactivateAdminDialog by remember { mutableStateOf(false) }
     var showImeiDialog by remember { mutableStateOf(false) }
     var imeiInput by remember(state.imei) { mutableStateOf(state.imei) }
-    var showPinDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showWipeDataDialog by remember { mutableStateOf(false) }
 
-    // PIN change inputs
-    var oldPinInput by remember { mutableStateOf("") }
-    var newPinInput by remember { mutableStateOf("") }
-    var confirmNewPinInput by remember { mutableStateOf("") }
-    var pinError by remember { mutableStateOf<String?>(null) }
-
     // Wipe data inputs
-    var wipePinInput by remember { mutableStateOf("") }
     var wipeDeleteInput by remember { mutableStateOf("") }
     var wipeError by remember { mutableStateOf<String?>(null) }
 
@@ -568,74 +560,6 @@ fun SettingsScreen(
                     HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
                     Spacer(Modifier.height(14.dp))
 
-                    // Local App PIN row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text(
-                                "PhoneGuard App PIN",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                text = if (state.hasAppPin) "App PIN set (local protection)" else "No local app PIN configured",
-                                fontSize = 12.sp,
-                                color = TextMuted
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                oldPinInput = ""
-                                newPinInput = ""
-                                confirmNewPinInput = ""
-                                pinError = null
-                                showPinDialog = true
-                            },
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(if (state.hasAppPin) "Change PIN" else "Set PIN", fontSize = 12.sp)
-                        }
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
-                    Spacer(Modifier.height(14.dp))
-
-                    // Auto-wipe on 10 failed PIN attempts
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text(
-                                "Auto-Wipe on PIN Failures",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                "Self-wipe app data after 10 failed PIN attempts",
-                                fontSize = 12.sp,
-                                color = TextMuted
-                            )
-                        }
-                        Switch(
-                            checked = state.autoWipeEnabled,
-                            onCheckedChange = viewModel::toggleAutoWipe,
-                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
-                        )
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-                    HorizontalDivider(Modifier, DividerDefaults.Thickness, color = LineColor)
-                    Spacer(Modifier.height(14.dp))
-
                     // Wipe App Data button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -650,14 +574,13 @@ fun SettingsScreen(
                                 color = AlertRed
                             )
                             Text(
-                                "Requires PIN & confirmation text",
+                                "Requires confirmation text",
                                 fontSize = 12.sp,
                                 color = TextMuted
                             )
                         }
                         Button(
                             onClick = {
-                                wipePinInput = ""
                                 wipeDeleteInput = ""
                                 wipeError = null
                                 showWipeDataDialog = true
@@ -1034,7 +957,7 @@ fun SettingsScreen(
         )
     }
 
-    // Wipe App Data Dialog (Requirement 15f)
+    // Wipe App Data Dialog
     if (showWipeDataDialog) {
         AlertDialog(
             onDismissRequest = { showWipeDataDialog = false },
@@ -1043,22 +966,8 @@ fun SettingsScreen(
             },
             text = {
                 Column {
-                    Text("This will permanently delete all local app data, logs, and settings. Enter your App PIN and type DELETE to confirm:", fontSize = 12.sp, color = TextMuted)
+                    Text("This will permanently delete all local app data, logs, and settings. Type DELETE to confirm:", fontSize = 12.sp, color = TextMuted)
                     Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = wipePinInput,
-                        onValueChange = { wipePinInput = it },
-                        label = { Text("App PIN") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = GuardTeal,
-                            unfocusedBorderColor = LineColor
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = wipeDeleteInput,
                         onValueChange = { wipeDeleteInput = it },
@@ -1083,7 +992,7 @@ fun SettingsScreen(
                             wipeError = "Must type DELETE"
                             return@TextButton
                         }
-                        viewModel.wipeAppDataWithPin(wipePinInput.trim()) { success, msg ->
+                        viewModel.wipeAppData { success, msg ->
                             if (success) {
                                 showWipeDataDialog = false
                                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
@@ -1100,102 +1009,6 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showWipeDataDialog = false }) {
-                    Text("Cancel", color = TextMuted)
-                }
-            },
-            containerColor = PanelDark
-        )
-    }
-
-    // Set/Change PIN Dialog (Requirement 15e)
-    if (showPinDialog) {
-        AlertDialog(
-            onDismissRequest = { showPinDialog = false },
-            title = {
-                Text(if (state.hasAppPin) "Change App PIN" else "Set App PIN", fontWeight = FontWeight.Bold, color = TextPrimary)
-            },
-            text = {
-                Column {
-                    if (state.hasAppPin) {
-                        Text("Enter current (OLD) PIN:", fontSize = 12.sp, color = TextMuted)
-                        Spacer(Modifier.height(6.dp))
-                        OutlinedTextField(
-                            value = oldPinInput,
-                            onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) oldPinInput = it },
-                            label = { Text("Old PIN") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = GuardTeal,
-                                unfocusedBorderColor = LineColor
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(12.dp))
-                    }
-                    Text("Enter new PIN (4-6 digits):", fontSize = 12.sp, color = TextMuted)
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = newPinInput,
-                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) newPinInput = it },
-                        label = { Text("New PIN") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = GuardTeal,
-                            unfocusedBorderColor = LineColor
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = confirmNewPinInput,
-                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) confirmNewPinInput = it },
-                        label = { Text("Confirm New PIN") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = GuardTeal,
-                            unfocusedBorderColor = LineColor
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (pinError != null) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(pinError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (state.hasAppPin) {
-                            if (!viewModel.verifyOldPin(oldPinInput)) {
-                                pinError = "Incorrect old PIN"
-                                return@TextButton
-                            }
-                        }
-                        if (newPinInput.length !in 4..6) {
-                            pinError = "New PIN must be 4-6 digits"
-                            return@TextButton
-                        }
-                        if (newPinInput != confirmNewPinInput) {
-                            pinError = "New PINs do not match"
-                            return@TextButton
-                        }
-                        showPinDialog = false
-                        viewModel.saveAppPin(newPinInput.trim())
-                        Toast.makeText(context, "App PIN updated successfully", Toast.LENGTH_SHORT).show()
-                    }
-                ) {
-                    Text("Save", color = GuardTeal, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPinDialog = false }) {
                     Text("Cancel", color = TextMuted)
                 }
             },

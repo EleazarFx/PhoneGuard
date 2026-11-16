@@ -36,8 +36,6 @@ data class SettingsUiState(
     val scheduledEndMinute: Int = 0,
     val isAdminActive: Boolean = false,
     val imei: String = "",
-    val hasAppPin: Boolean = false,
-    val autoWipeEnabled: Boolean = false,
     val crashReportConsent: Boolean = false,
     val logs: List<String> = emptyList()
 )
@@ -63,8 +61,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             scheduledEndMinute = tokenStore.getScheduledEndMinute(),
             isAdminActive = checkAdminActive(),
             imei = tokenStore.getImei() ?: "",
-            hasAppPin = tokenStore.hasAppPin(),
-            autoWipeEnabled = tokenStore.isAutoWipeOnPinFailureEnabled(),
             crashReportConsent = tokenStore.getCrashReportConsent(),
             logs = ServiceLogger.getLogs()
         )
@@ -146,36 +142,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _uiState.value = _uiState.value.copy(imei = imei)
     }
 
-    fun saveAppPin(pin: String) {
-        try {
-            val hashed = org.mindrot.jbcrypt.BCrypt.hashpw(pin, org.mindrot.jbcrypt.BCrypt.gensalt(12))
-            tokenStore.saveAppPin(hashed)
-            _uiState.value = _uiState.value.copy(hasAppPin = true)
-            ServiceLogger.log("Settings", "App PIN saved/updated")
-        } catch (e: Exception) {
-            Log.e("SettingsViewModel", "Failed to save app PIN", e)
-        }
-    }
-
-    fun verifyOldPin(oldPin: String): Boolean {
-        val storedHash = tokenStore.getAppPin() ?: return false
-        return try {
-            org.mindrot.jbcrypt.BCrypt.checkpw(oldPin, storedHash)
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    fun toggleAutoWipe(enabled: Boolean) {
-        tokenStore.saveAutoWipeOnPinFailureEnabled(enabled)
-        _uiState.value = _uiState.value.copy(autoWipeEnabled = enabled)
-    }
-
-    fun wipeAppDataWithPin(pin: String, onResult: (Boolean, String) -> Unit) {
-        if (!verifyOldPin(pin)) {
-            onResult(false, "Incorrect PIN")
-            return
-        }
+    fun wipeAppData(onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>()
@@ -329,8 +296,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             scheduledEndMinute = tokenStore.getScheduledEndMinute(),
             isAdminActive = checkAdminActive(),
             imei = tokenStore.getImei() ?: "",
-            hasAppPin = tokenStore.hasAppPin(),
-            autoWipeEnabled = tokenStore.isAutoWipeOnPinFailureEnabled(),
             logs = ServiceLogger.getLogs()
         )
     }
