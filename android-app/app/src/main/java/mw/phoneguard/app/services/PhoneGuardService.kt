@@ -531,7 +531,15 @@ class PhoneGuardService : Service() {
 
         Log.w(TAG, "!!! FOREIGN SIM CHANGE DETECTED !!! (currentCodes=$currentCodes, originalCodes=$originalCodes)")
         queueEvent(deviceId, "sim_change")
-        SmsSender.sendAlertToTrustedContacts(applicationContext, "[PhoneGuard] ALERT: Unauthorized SIM card change detected on protected device!")
+
+        val deviceName = "${Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }} ${Build.MODEL}"
+        val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        val simInfo = if (operator.isNotBlank()) "$operator ($operatorCode)" else "Unknown SIM"
+        val location = LocationHelper.getLastKnownLocation(applicationContext)
+        val mapsLink = LocationHelper.formatMapsUrl(location)
+
+        val alertMessage = "[PhoneGuard] ALERT: Unauthorized SIM inserted! Device: $deviceName. SIM: $simInfo. Time: $timeStr. Location: $mapsLink"
+        SmsSender.sendAlertToTrustedContacts(applicationContext, alertMessage, bypassRateLimit = false)
         triggerDecoy(applicationContext)
 
         tokenStore.saveLastAlertedSimCodes(currentCodes)

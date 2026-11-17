@@ -51,18 +51,22 @@ class PhoneGuardAdminReceiver : DeviceAdminReceiver() {
 
         queueEvent(appContext, "tamper")
 
+        // 1. Send SMS to trusted contacts immediately (bypass rate limit for critical tamper event)
+        try {
+            val timeStr = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", System.currentTimeMillis()).toString()
+            val smsMessage = "[PhoneGuard] Tamper attempt at $timeStr (Deactivation count: $tamperCount)"
+            SmsSender.sendAlertToTrustedContacts(appContext, smsMessage, bypassRateLimit = true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send emergency tamper SMS", e)
+        }
+
         val app = appContext as? mw.phoneguard.app.PhoneGuardApplication
         val scope = app?.appScope ?: CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         scope.launch {
             try {
-                // 1. Sync tamper event immediately
+                // 2. Sync tamper event immediately
                 SyncManager(appContext).syncPendingEvents()
-
-                // 2. Send SMS to trusted contacts
-                val timeStr = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", System.currentTimeMillis()).toString()
-                val smsMessage = "[PhoneGuard] Tamper attempt at $timeStr (Deactivation count: $tamperCount)"
-                SmsSender.sendAlertToTrustedContacts(appContext, smsMessage)
 
                 // 3. Play alarm 3 times (10s each), escalate if multiple disables
                 val alarmPlayer = AlarmPlayer(appContext)

@@ -258,6 +258,83 @@ class TokenStore private constructor(context: Context) {
             .apply()
     }
 
+    fun getOwnerSmsCode(): String {
+        val smsCode = prefs.getString(KEY_OWNER_SMS_CODE, null)
+        if (!smsCode.isNullOrBlank()) return smsCode
+        val appPin = getAppPin()
+        if (!appPin.isNullOrBlank()) return appPin
+        return "1234"
+    }
+
+    fun saveOwnerSmsCode(code: String) {
+        prefs.edit().putString(KEY_OWNER_SMS_CODE, code).apply()
+    }
+
+    private fun normalizePhoneKey(phone: String): String {
+        return phone.replace(Regex("[^0-9]"), "")
+    }
+
+    fun isSmsSenderLockedOut(rawPhone: String): Boolean {
+        val key = normalizePhoneKey(rawPhone)
+        if (key.isBlank()) return false
+        val lockoutUntil = prefs.getLong("sms_lockout_until_$key", 0L)
+        return System.currentTimeMillis() < lockoutUntil
+    }
+
+    fun recordSmsCodeFailure(rawPhone: String): Int {
+        val key = normalizePhoneKey(rawPhone)
+        if (key.isBlank()) return 1
+        val now = System.currentTimeMillis()
+        val windowMs = 10 * 60 * 1000L // 10 minutes
+        val lockoutDurationMs = 30 * 60 * 1000L // 30 minutes lockout
+
+        val firstFailTime = prefs.getLong("sms_first_fail_time_$key", 0L)
+        var attempts = prefs.getInt("sms_failed_attempts_$key", 0)
+
+        if (firstFailTime == 0L || (now - firstFailTime > windowMs)) {
+            attempts = 1
+            prefs.edit()
+                .putInt("sms_failed_attempts_$key", 1)
+                .putLong("sms_first_fail_time_$key", now)
+                .apply()
+        } else {
+            attempts += 1
+            val editor = prefs.edit().putInt("sms_failed_attempts_$key", attempts)
+            if (attempts >= 3) {
+                val lockoutUntil = now + lockoutDurationMs
+                editor.putLong("sms_lockout_until_$key", lockoutUntil)
+                android.util.Log.w("TokenStore", "SMS Sender $rawPhone locked out until timestamp $lockoutUntil after 3 wrong codes")
+            }
+            editor.apply()
+        }
+        return attempts
+    }
+
+    fun resetSmsCodeFailures(rawPhone: String) {
+        val key = normalizePhoneKey(rawPhone)
+        if (key.isBlank()) return
+        prefs.edit()
+            .remove("sms_failed_attempts_$key")
+            .remove("sms_first_fail_time_$key")
+            .remove("sms_lockout_until_$key")
+            .apply()
+    }
+
+    fun canSendSmsAlertToContact(rawPhone: String): Boolean {
+        val key = normalizePhoneKey(rawPhone)
+        if (key.isBlank()) return true
+        val lastSent = prefs.getLong("sms_last_sent_time_$key", 0L)
+        val now = System.currentTimeMillis()
+        val rateLimitMs = 10 * 60 * 1000L // 10 minutes
+        return (now - lastSent) >= rateLimitMs
+    }
+
+    fun recordSmsAlertSent(rawPhone: String) {
+        val key = normalizePhoneKey(rawPhone)
+        if (key.isBlank()) return
+        prefs.edit().putLong("sms_last_sent_time_$key", System.currentTimeMillis()).apply()
+    }
+
     fun getCrashReportConsent(): Boolean = prefs.getBoolean("key_crash_consent", false)
     fun setCrashReportConsent(enabled: Boolean) = prefs.edit().putBoolean("key_crash_consent", enabled).apply()
 
@@ -305,6 +382,7 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_SILENCE_EMAIL = "opt_in_silence_email"
         private const val KEY_DEVICE_IMEI = "device_imei"
         private const val KEY_APP_PIN = "app_local_pin"
+        private const val KEY_OWNER_SMS_CODE = "owner_sms_code"
         private const val KEY_PIN_FAILED_ATTEMPTS = "pin_failed_attempts"
         private const val KEY_PIN_LOCKOUT_UNTIL = "pin_lockout_until"
         private const val KEY_PIN_FIRST_FAILURE_TIME = "pin_first_failure_time"
