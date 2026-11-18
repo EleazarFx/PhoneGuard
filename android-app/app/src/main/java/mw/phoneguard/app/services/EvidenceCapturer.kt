@@ -42,7 +42,7 @@ class EvidenceCapturer(private val context: Context) {
 
     private val TAG = "PhoneGuardEvidence"
 
-    suspend fun captureAndAttachEvidence(event: EventEntity): EventEntity = withContext(Dispatchers.IO) {
+    suspend fun captureAndAttachEvidence(event: EventEntity, capturePhoto: Boolean = true): EventEntity = withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
         val tokenStore = TokenStore.get(appContext)
 
@@ -56,42 +56,44 @@ class EvidenceCapturer(private val context: Context) {
         val battery = fetchBattery(appContext)
 
         // 3. Capture Photo Evidence & ML Kit Face Detection / Cropping using CameraX
-        var captureStatus = "pending_capture"
+        var captureStatus = if (capturePhoto) "pending_capture" else "n/a"
         var photoSha256: String? = null
 
-        try {
-            val capturesDir = File(appContext.filesDir, "captures")
-            if (!capturesDir.exists()) {
-                capturesDir.mkdirs()
-            }
-            val photoFile = File(capturesDir, "${event.id}.jpg")
+        if (capturePhoto) {
+            try {
+                val capturesDir = File(appContext.filesDir, "captures")
+                if (!capturesDir.exists()) {
+                    capturesDir.mkdirs()
+                }
+                val photoFile = File(capturesDir, "${event.id}.jpg")
 
-            val captureResult = capturePhotoWithCameraX(appContext, photoFile)
-            if (captureResult != null) {
-                val (bitmap, lensFacing) = captureResult
-                val processed = detectFaceAndCropAndSave(appContext, bitmap, lensFacing, photoFile)
-                captureStatus = processed.first
-                photoSha256 = processed.second
-            } else {
+                val captureResult = capturePhotoWithCameraX(appContext, photoFile)
+                if (captureResult != null) {
+                    val (bitmap, lensFacing) = captureResult
+                    val processed = detectFaceAndCropAndSave(appContext, bitmap, lensFacing, photoFile)
+                    captureStatus = processed.first
+                    photoSha256 = processed.second
+                } else {
+                    captureStatus = "camera_blocked"
+                }
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Camera permission denied or blocked: ${e.message}")
+                captureStatus = "camera_blocked"
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "Camera deferred due to background/service state: ${e.message}")
+                captureStatus = "deferred"
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to capture photo evidence: ${e.message}", e)
                 captureStatus = "camera_blocked"
             }
-        } catch (e: SecurityException) {
-            Log.w(TAG, "Camera permission denied or blocked: ${e.message}")
-            captureStatus = "camera_blocked"
-        } catch (e: IllegalStateException) {
-            Log.w(TAG, "Camera deferred due to background/service state: ${e.message}")
-            captureStatus = "deferred"
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to capture photo evidence: ${e.message}", e)
-            captureStatus = "camera_blocked"
-        }
 
-        // 4. Optional Video Evidence
-        if (tokenStore.isVideoEvidenceEnabled()) {
-            try {
-                captureVideoEvidence(appContext)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to capture video evidence: ${e.message}", e)
+            // 4. Optional Video Evidence
+            if (tokenStore.isVideoEvidenceEnabled()) {
+                try {
+                    captureVideoEvidence(appContext)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to capture video evidence: ${e.message}", e)
+                }
             }
         }
 

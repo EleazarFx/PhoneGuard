@@ -1,0 +1,7 @@
+- [ ] Fix location helper and evidence capturer (`lat`/`lng` null fix & periodic ping camera exclusion)
+- [ ] Fix front camera face detection / tamper event syncing resilience
+- [ ] Implement video evidence capture in `EvidenceCapturer`
+- [ ] Wire up Test Decoy Shutdown on Home screen
+- [ ] Refactor Settings UI (toggle styling, IMEI helper steps, gate Debug & Diagnostics behind `BuildConfig.DEBUG`)
+- [ ] Implement server-side email escalation in backend (`DeviceService` / `EmailService`)
+- [ ] Run build and verification tests

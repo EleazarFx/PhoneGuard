@@ -281,7 +281,12 @@ fun SettingsScreen(
                         Switch(
                             checked = state.videoEvidenceEnabled,
                             onCheckedChange = viewModel::toggleVideoEvidence,
-                            colors = SwitchDefaults.colors(checkedThumbColor = GuardTeal)
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = GuardTeal,
+                                checkedTrackColor = GuardTeal.copy(alpha = 0.3f),
+                                uncheckedThumbColor = TextMuted,
+                                uncheckedTrackColor = PanelDark
+                            )
                         )
                     }
 
@@ -888,6 +893,8 @@ fun SettingsScreen(
             text = {
                 Column {
                     Text("Enter 15-digit IMEI for hardware identification:", fontSize = 12.sp, color = TextMuted)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Tip: Dial *#06# on your phone dialer or check Settings > About Phone to find your IMEI.", fontSize = 11.sp, color = GuardTeal)
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = imeiInput,

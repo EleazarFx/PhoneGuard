@@ -424,7 +424,7 @@ class PhoneGuardService : Service() {
                                 timestamp = System.currentTimeMillis(),
                                 captureStatus = "pending_capture"
                             )
-                            event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
+                            event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event, capturePhoto = false)
                             db.eventDao().upsert(event)
                             Log.i(TAG, "Logged airplane mode tamper event with evidence to Room")
                         }
@@ -667,7 +667,7 @@ class PhoneGuardService : Service() {
                                 captureStatus = "periodic_broadcast",
                                 clientSeq = System.currentTimeMillis()
                             )
-                            event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
+                            event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event, capturePhoto = false)
                             val db = PhoneGuardDatabase.get(applicationContext)
                             db.eventDao().upsert(event)
                             Log.i(TAG, "1-Min Periodic Location Ping: lat=${event.lat}, lng=${event.lng}")

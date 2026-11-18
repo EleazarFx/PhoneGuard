@@ -24,10 +24,15 @@ object LocationHelper {
                 try { locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) } catch (_: Exception) { null }
             } else null
 
-            when {
+            val best = when {
                 gpsLoc != null && netLoc != null -> if (gpsLoc.accuracy <= netLoc.accuracy) gpsLoc else netLoc
                 gpsLoc != null -> gpsLoc
                 else -> netLoc
+            }
+
+            if (best != null) best else {
+                // Synchronous fallback or blocking wait if needed, or return null
+                null
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error getting location: ${e.message}")
