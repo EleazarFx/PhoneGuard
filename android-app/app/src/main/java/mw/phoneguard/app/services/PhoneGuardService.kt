@@ -1,5 +1,6 @@
 package mw.phoneguard.app.services
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -23,13 +24,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import mw.phoneguard.app.MainActivity
-import mw.phoneguard.app.R
 import mw.phoneguard.app.data.local.EventEntity
 import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
 import mw.phoneguard.app.data.sync.SyncManager
-import android.app.KeyguardManager
-
 
 class PhoneGuardService : Service() {
 
@@ -38,15 +36,31 @@ class PhoneGuardService : Service() {
     private var locationTickerJob: Job? = null
 
     private var alertModeManager: AlertModeManager? = null
-
     private var snatchGuard: SnatchGuard? = null
     private var simReceiver: BroadcastReceiver? = null
     private var screenStateReceiver: ScreenStateReceiver? = null
     private var airplaneReceiver: BroadcastReceiver? = null
 
+    var currentTrackingMode: TrackingMode = TrackingMode.NORMAL
+        private set
+
     companion object {
         private const val CHANNEL_ID = "phoneguard_service"
         private const val NOTIFICATION_ID = 1001
+
+        const val ACTION_START_ALERT_MODE = "mw.phoneguard.app.START_ALERT_MODE"
+        const val ACTION_STOP_ALERT_MODE = "mw.phoneguard.app.STOP_ALERT_MODE"
+        const val ACTION_TRIGGER_DECOY = "mw.phoneguard.app.TRIGGER_DECOY"
+        const val ACTION_BOOT = "mw.phoneguard.app.BOOT"
+        const val ACTION_SCREEN_LOCKED = "mw.phoneguard.app.SCREEN_LOCKED"
+        const val ACTION_SCREEN_UNLOCKED = "mw.phoneguard.app.SCREEN_UNLOCKED"
+        const val ACTION_NOT_UNLOCKED = "mw.phoneguard.app.NOT_UNLOCKED"
+        const val ACTION_UNLOCKED = "mw.phoneguard.app.UNLOCKED"
+        const val ACTION_FORCE_SIM_CHECK = "mw.phoneguard.app.FORCE_SIM_CHECK"
+        const val ACTION_FORCE_WRONG_PIN = "mw.phoneguard.app.FORCE_WRONG_PIN"
+
+        const val ACTION_SET_TRACKING_MODE = "mw.phoneguard.app.SET_TRACKING_MODE"
+        const val EXTRA_TRACKING_MODE = "mw.phoneguard.app.EXTRA_TRACKING_MODE"
 
         fun start(context: Context) {
             val intent = Intent(context, PhoneGuardService::class.java)
@@ -61,14 +75,6 @@ class PhoneGuardService : Service() {
             context.stopService(Intent(context, PhoneGuardService::class.java))
         }
 
-
-
-
-        const val ACTION_START_ALERT_MODE = "mw.phoneguard.app.START_ALERT_MODE"
-        const val ACTION_STOP_ALERT_MODE = "mw.phoneguard.app.STOP_ALERT_MODE"
-        const val ACTION_TRIGGER_DECOY = "mw.phoneguard.app.TRIGGER_DECOY"
-        const val ACTION_BOOT = "mw.phoneguard.app.BOOT"
-
         fun startOnBoot(context: Context) {
             val intent = Intent(context, PhoneGuardService::class.java).apply {
                 action = ACTION_BOOT
@@ -76,7 +82,6 @@ class PhoneGuardService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
-
                 context.startService(intent)
             }
         }
@@ -86,6 +91,18 @@ class PhoneGuardService : Service() {
                 action = if (armed) ACTION_START_ALERT_MODE else ACTION_STOP_ALERT_MODE
             }
             context.startService(intent)
+        }
+
+        fun setTrackingMode(context: Context, mode: TrackingMode) {
+            val intent = Intent(context, PhoneGuardService::class.java).apply {
+                action = ACTION_SET_TRACKING_MODE
+                putExtra(EXTRA_TRACKING_MODE, mode.name)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
 
         fun triggerDecoy(context: Context) {
@@ -98,13 +115,6 @@ class PhoneGuardService : Service() {
                 context.startService(intent)
             }
         }
-
-        const val ACTION_SCREEN_LOCKED = "mw.phoneguard.app.SCREEN_LOCKED"
-        const val ACTION_SCREEN_UNLOCKED = "mw.phoneguard.app.SCREEN_UNLOCKED"
-        const val ACTION_NOT_UNLOCKED = "mw.phoneguard.app.NOT_UNLOCKED"
-        const val ACTION_UNLOCKED = "mw.phoneguard.app.UNLOCKED"
-        const val ACTION_FORCE_SIM_CHECK = "mw.phoneguard.app.FORCE_SIM_CHECK"
-        const val ACTION_FORCE_WRONG_PIN = "mw.phoneguard.app.FORCE_WRONG_PIN"
 
         fun forceSimCheck(context: Context) {
             val intent = Intent(context, PhoneGuardService::class.java).apply {
@@ -123,28 +133,29 @@ class PhoneGuardService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "Service onCreate — starting foreground")
-        ServiceLogger.log(TAG, "Service onCreate — starting foreground")
+        Log.i(TAG, "Service onCreate — initializing Adaptive Protection")
+        ServiceLogger.log(TAG, "Service onCreate — initializing Adaptive Protection")
+
+        val storedModeName = TokenStore.get(applicationContext).getTrackingModeName()
+        currentTrackingMode = try { TrackingMode.valueOf(storedModeName) } catch (_: Exception) { TrackingMode.NORMAL }
+
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         registerSimReceiver()
         registerScreenStateReceiver()
         registerAirplaneModeReceiver()
-        // Immediate SIM check on service creation (catches boot-time SIM swaps)
         handleSimState()
-        // Start 1-minute location broadcasting loop
-        startPeriodicLocationTicker()
+        startAdaptiveLocationTicker()
 
-        // Start motion detection only if alert mode is armed AND device/screen locked
         val tokenStore = TokenStore.get(applicationContext)
         if (tokenStore.isAlertModeArmed()) {
             val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
-            val isLocked = keyguardManager?.isDeviceLocked() == true || keyguardManager?.isKeyguardLocked == true
+            val isLocked = keyguardManager?.isDeviceLocked == true || keyguardManager?.isKeyguardLocked == true
             if (isLocked) {
-                Log.i(TAG, "Alert Mode armed + device/screen locked — starting motion detection")
+                Log.i(TAG, "Alert Mode armed + locked — starting motion detection")
                 startAlertMode()
             } else {
-                Log.i(TAG, "Alert Mode armed but device/screen unlocked — motion detection will not start")
+                Log.i(TAG, "Alert Mode armed but unlocked — motion detection standby")
                 stopAlertMode()
             }
         } else {
@@ -157,12 +168,18 @@ class PhoneGuardService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand (action=${intent?.action})")
         ServiceLogger.log(TAG, "onStartCommand (action=${intent?.action})")
+
         startForeground(NOTIFICATION_ID, buildNotification())
         handleSimState()
-        startPeriodicLocationTicker()
         updateCommandPollSchedule()
 
         when (intent?.action) {
+            ACTION_SET_TRACKING_MODE -> {
+                val modeName = intent.getStringExtra(EXTRA_TRACKING_MODE) ?: TrackingMode.NORMAL.name
+                val newMode = try { TrackingMode.valueOf(modeName) } catch (_: Exception) { TrackingMode.NORMAL }
+                updateTrackingMode(newMode)
+            }
+
             ACTION_BOOT -> {
                 Log.w(TAG, "!!! DEVICE BOOT / RESTART DETECTED !!!")
                 ServiceLogger.log(TAG, "DEVICE BOOT / RESTART DETECTED")
@@ -172,56 +189,45 @@ class PhoneGuardService : Service() {
                     queueEvent(deviceId, "restart")
                 }
             }
+
             ACTION_START_ALERT_MODE -> {
                 val tokenStore = TokenStore.get(applicationContext)
                 if (tokenStore.isAlertModeArmed()) {
                     val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
-                    val isLocked = keyguardManager?.isDeviceLocked() == true || keyguardManager?.isKeyguardLocked == true
+                    val isLocked = keyguardManager?.isDeviceLocked == true || keyguardManager?.isKeyguardLocked == true
                     if (isLocked) {
-                        Log.i(TAG, "Alert Mode armed via action + device/screen locked — starting motion detection")
                         startAlertMode()
                     } else {
-                        Log.i(TAG, "Alert Mode armed via action but device/screen unlocked — waiting for lock")
                         stopAlertMode()
                     }
                 }
             }
+
             ACTION_STOP_ALERT_MODE -> stopAlertMode()
 
-            ACTION_FORCE_SIM_CHECK -> {
-                Log.i(TAG, "Force SIM check triggered")
-                ServiceLogger.log(TAG, "Force SIM check executed")
-                handleSimState()
-            }
+            ACTION_FORCE_SIM_CHECK -> handleSimState()
 
             ACTION_FORCE_WRONG_PIN -> {
                 Log.w(TAG, "Force wrong-PIN trigger executed")
-                ServiceLogger.log(TAG, "Force wrong-PIN trigger executed")
                 val tokenStore = TokenStore.get(applicationContext)
                 val deviceId = tokenStore.getDeviceId() ?: "debug_device"
                 queueEvent(deviceId, "wrong_pin")
+                updateTrackingMode(TrackingMode.SUSPICIOUS)
             }
 
             ACTION_NOT_UNLOCKED -> {
                 val tokenStore = TokenStore.get(applicationContext)
                 if (tokenStore.isAlertModeArmed()) {
                     val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
-                    val isLocked = keyguardManager?.isDeviceLocked() == true || keyguardManager?.isKeyguardLocked == true
-                    if (isLocked) {
-                        if (alertModeManager == null) {
-                            Log.i(TAG, "Phone not unlocked + Alert Mode armed — starting motion detection")
-                            startAlertMode()
-                        }
-                    } else {
-                        Log.i(TAG, "ACTION_NOT_UNLOCKED received but device is actually unlocked — stopping motion detection")
-                        stopAlertMode()
+                    val isLocked = keyguardManager?.isDeviceLocked == true || keyguardManager?.isKeyguardLocked == true
+                    if (isLocked && alertModeManager == null) {
+                        startAlertMode()
                     }
                 }
             }
 
             ACTION_UNLOCKED -> {
                 if (alertModeManager != null) {
-                    Log.i(TAG, "Phone unlocked — stopping motion detection")
                     stopAlertMode()
                 }
                 snatchGuard?.stop()
@@ -232,6 +238,18 @@ class PhoneGuardService : Service() {
         }
 
         return START_STICKY
+    }
+
+    private fun updateTrackingMode(newMode: TrackingMode) {
+        if (currentTrackingMode == newMode) return
+        val oldMode = currentTrackingMode
+        currentTrackingMode = newMode
+        TokenStore.get(applicationContext).saveTrackingModeName(newMode.name)
+        Log.i(TAG, "Tracking mode changed: $oldMode -> $newMode (${newMode.description})")
+        ServiceLogger.log(TAG, "Tracking mode updated to ${newMode.name}")
+
+        updateForegroundNotification()
+        restartAdaptiveLocationTicker()
     }
 
     private fun showDecoyFullScreen(context: Context) {
@@ -271,7 +289,6 @@ class PhoneGuardService : Service() {
                 .build()
 
             notificationManager.notify(9999, notification)
-            Log.i(TAG, "Triggered full-screen decoy shutdown intent")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to trigger full-screen decoy: ${e.message}", e)
         }
@@ -280,7 +297,7 @@ class PhoneGuardService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        Log.w(TAG, "Service onDestroy — this shouldn't happen unless user or system stopped us")
+        Log.w(TAG, "Service onDestroy — stopping receivers and timers")
         snatchGuard?.stop()
         snatchGuard = null
         stopAlertMode()
@@ -292,17 +309,17 @@ class PhoneGuardService : Service() {
     }
 
     // ─────────────────────────────────────────────────────────
-    // Foreground notification
+    // Foreground Notification
     // ─────────────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "PhoneGuard Protection",
+                "AntiTheft is protecting your device",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows when PhoneGuard is actively protecting this phone"
+                description = "Shows when PhoneGuard AntiTheft is actively protecting this phone"
                 setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
@@ -318,19 +335,42 @@ class PhoneGuardService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        val (title, text, priority) = when (currentTrackingMode) {
+            TrackingMode.NORMAL -> Triple(
+                "AntiTheft is protecting your device",
+                "Normal Mode · Low-Power 15-min location check",
+                NotificationCompat.PRIORITY_LOW
+            )
+            TrackingMode.SUSPICIOUS -> Triple(
+                "PhoneGuard · SUSPICIOUS ACTIVITY",
+                "High Accuracy 30s GPS Tracking active",
+                NotificationCompat.PRIORITY_HIGH
+            )
+            TrackingMode.THEFT -> Triple(
+                "PhoneGuard · THEFT TRACKING ACTIVE",
+                "Live 15s GPS & Evidence Capture active",
+                NotificationCompat.PRIORITY_MAX
+            )
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("PhoneGuard · Protected")
-            .setContentText("Monitoring for theft triggers")
+            .setContentTitle(title)
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentIntent(contentIntent)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(priority)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
     }
 
+    private fun updateForegroundNotification() {
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, buildNotification())
+    }
+
     // ─────────────────────────────────────────────────────────
-    // SIM change detection (runtime receiver — more reliable than manifest)
+    // SIM Change Receiver
     // ─────────────────────────────────────────────────────────
 
     private fun registerSimReceiver() {
@@ -339,17 +379,10 @@ class PhoneGuardService : Service() {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 val action = intent?.action ?: return
-                Log.d(TAG, "Broadcast received: $action")
-
-                when (action) {
-                    "android.intent.action.SIM_STATE_CHANGED" -> {
-                        val state = intent.getStringExtra("ss")
-                        Log.d(TAG, "SIM state: $state")
-                        // SIM_STATE_CHANGED fires with multiple states (ABSENT, PIN_REQUIRED, LOADED, READY).
-                        // We act only on the terminal "usable" states.
-                        if (state == "LOADED" || state == "READY") {
-                            handleSimState()
-                        }
+                if (action == "android.intent.action.SIM_STATE_CHANGED") {
+                    val state = intent.getStringExtra("ss")
+                    if (state == "LOADED" || state == "READY") {
+                        handleSimState()
                     }
                 }
             }
@@ -363,16 +396,11 @@ class PhoneGuardService : Service() {
             registerReceiver(receiver, filter)
         }
         simReceiver = receiver
-        Log.i(TAG, "SIM receiver registered")
     }
 
     private fun unregisterSimReceiver() {
         simReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (e: Exception) {
-                Log.w(TAG, "unregisterReceiver: ${e.message}")
-            }
+            try { unregisterReceiver(it) } catch (_: Exception) {}
             simReceiver = null
         }
     }
@@ -392,16 +420,11 @@ class PhoneGuardService : Service() {
             registerReceiver(receiver, filter)
         }
         screenStateReceiver = receiver
-        Log.i(TAG, "Screen state receiver registered dynamically")
     }
 
     private fun unregisterScreenStateReceiver() {
         screenStateReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (e: Exception) {
-                Log.w(TAG, "unregisterScreenStateReceiver: ${e.message}")
-            }
+            try { unregisterReceiver(it) } catch (_: Exception) {}
             screenStateReceiver = null
         }
     }
@@ -412,7 +435,6 @@ class PhoneGuardService : Service() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == Intent.ACTION_AIRPLANE_MODE_CHANGED) {
                     val isAirplaneModeOn = intent.getBooleanExtra("state", false)
-                    Log.w(TAG, "Airplane mode changed: $isAirplaneModeOn")
                     if (isAirplaneModeOn) {
                         serviceScope.launch {
                             val tokenStore = TokenStore.get(applicationContext)
@@ -426,8 +448,9 @@ class PhoneGuardService : Service() {
                             )
                             event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event, capturePhoto = false)
                             db.eventDao().upsert(event)
-                            Log.i(TAG, "Logged airplane mode tamper event with evidence to Room")
+                            Log.w(TAG, "Logged airplane mode tamper event")
                         }
+                        updateTrackingMode(TrackingMode.SUSPICIOUS)
                     }
                 }
             }
@@ -440,25 +463,18 @@ class PhoneGuardService : Service() {
             registerReceiver(receiver, filter)
         }
         airplaneReceiver = receiver
-        Log.i(TAG, "Airplane mode receiver registered")
     }
 
     private fun unregisterAirplaneModeReceiver() {
         airplaneReceiver?.let {
-            try {
-                unregisterReceiver(it)
-            } catch (_: Exception) {}
+            try { unregisterReceiver(it) } catch (_: Exception) {}
             airplaneReceiver = null
         }
     }
 
     private fun handleSimState() {
         val tokenStore = TokenStore.get(applicationContext)
-        val deviceId = tokenStore.getDeviceId()
-        if (deviceId == null) {
-            Log.w(TAG, "No device registered; cannot compare SIM")
-            return
-        }
+        val deviceId = tokenStore.getDeviceId() ?: return
 
         val tm = getSystemService(TELEPHONY_SERVICE) as? TelephonyManager ?: return
         val operator = tm.simOperatorName ?: ""
@@ -478,68 +494,42 @@ class PhoneGuardService : Service() {
         val currentSubscriptions = mutableSetOf<String>()
         if (subscriptionId.isNotBlank()) currentSubscriptions.add(subscriptionId)
 
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val sm = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
-                if (sm != null) {
-                    @Suppress("MissingPermission")
-                    val activeList = sm.activeSubscriptionInfoList
-                    if (!activeList.isNullOrEmpty()) {
-                        for (sub in activeList) {
-                            if (!sub.carrierName.isNullOrBlank()) currentOperators.add(sub.carrierName.toString())
-                            if (!sub.countryIso.isNullOrBlank()) currentCountries.add(sub.countryIso.toString())
-                            val mccMnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                "${sub.mccString.orEmpty()}${sub.mncString.orEmpty()}"
-                            } else ""
-                            if (mccMnc.isNotBlank()) currentCodes.add(mccMnc)
-                            val carrier = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
-                            currentSubscriptions.add("${sub.subscriptionId}:$carrier")
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
         if (!tokenStore.hasOriginalSimIdentity()) {
             if (currentCodes.isNotEmpty()) {
                 tokenStore.saveOriginalSimIdentity(currentOperators, currentCountries, currentCodes, currentSubscriptions)
                 tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
-                Log.i(TAG, "First SIM identity baseline stored: codes=$currentCodes")
             }
             return
         }
 
         val originalCodes = tokenStore.getOriginalSimCodes() ?: emptySet()
-        val matchesOriginal = currentCodes.isNotEmpty() && originalCodes.isNotEmpty() && (currentCodes == originalCodes || currentCodes.intersect(originalCodes).isNotEmpty())
+        val matchesOriginal = currentCodes.isNotEmpty() && originalCodes.isNotEmpty() &&
+                (currentCodes == originalCodes || currentCodes.intersect(originalCodes).isNotEmpty())
 
         if (matchesOriginal) {
             val lastAlerted = tokenStore.getLastAlertedSimCodes()
             if (lastAlerted != null) {
-                Log.i(TAG, "Original SIM re-inserted; clearing previous SIM change alert state.")
                 tokenStore.clearLastAlertedSimCodes()
             }
             tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
-            Log.d(TAG, "SIM check: Original trusted SIM active (codes=$currentCodes)")
             return
         }
 
         val lastAlerted = tokenStore.getLastAlertedSimCodes()
-        if (lastAlerted == currentCodes) {
-            Log.d(TAG, "Foreign SIM active but already alerted for codes=$currentCodes")
-            return
-        }
+        if (lastAlerted == currentCodes) return
 
-        Log.w(TAG, "!!! FOREIGN SIM CHANGE DETECTED !!! (currentCodes=$currentCodes, originalCodes=$originalCodes)")
+        Log.w(TAG, "!!! FOREIGN SIM CHANGE DETECTED !!! Escalating to SUSPICIOUS mode.")
         queueEvent(deviceId, "sim_change")
+        updateTrackingMode(TrackingMode.SUSPICIOUS)
 
-        val deviceName = "${Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }} ${Build.MODEL}"
+        val deviceName = "${Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} ${Build.MODEL}"
         val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
         val simInfo = if (operator.isNotBlank()) "$operator ($operatorCode)" else "Unknown SIM"
-        val location = LocationHelper.getLastKnownLocation(applicationContext)
-        val mapsLink = LocationHelper.formatMapsUrl(location)
+        val location = AdaptiveLocationManager.fallbackLocationManager(applicationContext)
+        val mapsLink = AdaptiveLocationManager.formatMapsUrl(location)
 
         val alertMessage = "[PhoneGuard] ALERT: Unauthorized SIM inserted! Device: $deviceName. SIM: $simInfo. Time: $timeStr. Location: $mapsLink"
-        SmsSender.sendAlertToTrustedContacts(applicationContext, alertMessage, bypassRateLimit = false)
+        SmsSender.sendAlertToTrustedContacts(applicationContext, alertMessage, bypassRateLimit = true)
         triggerDecoy(applicationContext)
 
         tokenStore.saveLastAlertedSimCodes(currentCodes)
@@ -561,17 +551,9 @@ class PhoneGuardService : Service() {
                     }
                 }
             }
-        } catch (_: SecurityException) {
-            Log.d(TAG, "READ_PHONE_STATE permission not granted; falling back to TelephonyManager fields")
-        } catch (e: Exception) {
-            Log.w(TAG, "SubscriptionManager query failed: ${e.message}")
-        }
+        } catch (_: Exception) {}
         return ""
     }
-
-    // ─────────────────────────────────────────────────────────
-    // Event queueing
-    // ─────────────────────────────────────────────────────────
 
     private fun queueEvent(deviceId: String, type: String) {
         serviceScope.launch {
@@ -586,29 +568,19 @@ class PhoneGuardService : Service() {
                 )
                 event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
                 db.eventDao().upsert(event)
-                Log.i(TAG, "$type event queued with evidence: ${event.id}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue $type event", e)
             }
         }
     }
 
-
-
-
-
     fun startAlertMode() {
-        if (alertModeManager != null) {
-            Log.d(TAG, "Alert Mode already active")
-            return
-        }
-
+        if (alertModeManager != null) return
         alertModeManager = AlertModeManager(applicationContext) {
             onMotionDetected()
         }.also { it.start() }
 
         updateNotificationToArmed()
-        Log.i(TAG, "Alert Mode started")
     }
 
     fun stopAlertMode() {
@@ -617,16 +589,15 @@ class PhoneGuardService : Service() {
         alertModeManager?.stop()
         alertModeManager = null
         updateNotificationToNormal()
-        Log.i(TAG, "Alert Mode stopped")
     }
 
     private fun onMotionDetected() {
         val tokenStore = TokenStore.get(applicationContext)
         val deviceId = tokenStore.getDeviceId() ?: return
 
-        Log.w(TAG, "Motion detected — queuing snatch event and activating SnatchGuard")
+        Log.w(TAG, "Motion detected — queuing snatch event and escalating to SUSPICIOUS mode")
+        updateTrackingMode(TrackingMode.SUSPICIOUS)
 
-        // Queue the initial event (queued on first motion, not after grace period)
         serviceScope.launch {
             try {
                 val db = PhoneGuardDatabase.get(applicationContext)
@@ -639,65 +610,109 @@ class PhoneGuardService : Service() {
                 )
                 event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
                 db.eventDao().upsert(event)
-                Log.i(TAG, "snatch event queued on motion with evidence: ${event.id}")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue snatch event", e)
             }
         }
 
-        // Activate SnatchGuard (plays alarm, starts grace period, locks if not unlocked)
         if (snatchGuard == null) {
             snatchGuard = SnatchGuard(applicationContext).also { it.start() }
         }
     }
 
-    private fun startPeriodicLocationTicker() {
+    private fun restartAdaptiveLocationTicker() {
+        locationTickerJob?.cancel()
+        locationTickerJob = null
+        startAdaptiveLocationTicker()
+    }
+
+    private fun startAdaptiveLocationTicker() {
         if (locationTickerJob?.isActive == true) return
         locationTickerJob = serviceScope.launch {
             while (isActive) {
+                val mode = currentTrackingMode
                 try {
                     val tokenStore = TokenStore.get(applicationContext)
-                    if (tokenStore.isPeriodicLocationEnabled()) {
-                        val deviceId = tokenStore.getDeviceId()
-                        if (deviceId != null) {
-                            var event = EventEntity(
-                                deviceId = deviceId,
-                                type = "location_ping",
-                                timestamp = System.currentTimeMillis(),
-                                captureStatus = "periodic_broadcast",
-                                clientSeq = System.currentTimeMillis()
-                            )
-                            event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event, capturePhoto = false)
-                            val db = PhoneGuardDatabase.get(applicationContext)
-                            db.eventDao().upsert(event)
-                            Log.i(TAG, "1-Min Periodic Location Ping: lat=${event.lat}, lng=${event.lng}")
-                            SyncManager(applicationContext).syncPendingEvents()
+                    val deviceId = tokenStore.getDeviceId()
+
+                    if (deviceId != null && (tokenStore.isPeriodicLocationEnabled() || mode != TrackingMode.NORMAL)) {
+                        val location = AdaptiveLocationManager.fetchLocation(applicationContext, mode)
+                        val checkResult = AdaptiveLocationManager.evaluateLocationMovement(location, mode)
+
+                        when (checkResult) {
+                            is LocationCheckResult.Dispatch -> {
+                                var event = EventEntity(
+                                    deviceId = deviceId,
+                                    type = "location_ping",
+                                    timestamp = System.currentTimeMillis(),
+                                    captureStatus = "adaptive_${mode.name.lowercase()}",
+                                    clientSeq = System.currentTimeMillis()
+                                )
+
+                                val capturePhoto = mode == TrackingMode.THEFT
+                                event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event, capturePhoto = capturePhoto)
+
+                                val db = PhoneGuardDatabase.get(applicationContext)
+                                db.eventDao().upsert(event)
+                                Log.i(TAG, "Adaptive Location Ping [${mode.name}]: lat=${event.lat}, lng=${event.lng}, moved=${"%.1f".format(checkResult.distanceMovedMeters)}m")
+
+                                val syncSuccess = try {
+                                    SyncManager(applicationContext).syncPendingEvents()
+                                    true
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Sync error on location ping: ${e.message}")
+                                    false
+                                }
+
+                                // Fallback SMS if internet/server fails during Suspicious or Theft Mode
+                                if (!syncSuccess && mode != TrackingMode.NORMAL) {
+                                    val mapsUrl = AdaptiveLocationManager.formatMapsUrl(location)
+                                    val deviceName = "${Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} ${Build.MODEL}"
+                                    val batteryStr = event.battery?.let { "$it%" } ?: "Unknown"
+                                    val smsMessage = "[PhoneGuard] ALERT (${mode.name} Tracking)! Device: $deviceName. Battery: $batteryStr. Location: $mapsUrl"
+                                    Log.w(TAG, "Dispatching offline fallback SMS location alert to emergency contacts")
+                                    SmsSender.sendAlertToTrustedContacts(applicationContext, smsMessage, bypassRateLimit = (mode == TrackingMode.THEFT))
+                                }
+                            }
+
+                            is LocationCheckResult.Stationary -> {
+                                Log.d(TAG, "Location stationary: ${checkResult.reason}. Suppressing redundant GPS update.")
+                            }
+
+                            is LocationCheckResult.PermissionDenied -> {
+                                Log.w(TAG, "Adaptive location skipped: missing location permissions")
+                            }
+
+                            is LocationCheckResult.LocationUnavailable -> {
+                                Log.w(TAG, "Adaptive location unavailable from Fused/Legacy providers")
+                            }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "1-Min Periodic Location Ping failed: ${e.message}")
+                    Log.e(TAG, "Adaptive Location Ticker error: ${e.message}", e)
                 }
-                delay(60_000L)
+
+                delay(mode.intervalMs)
             }
         }
     }
 
     private fun updateNotificationToArmed() {
-        val notification = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("PhoneGuard · Alert Mode Armed")
-            .setContentText("Motion detection active")
+            .setContentText("Motion detection active (${currentTrackingMode.description})")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setOngoing(true)
-            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
-            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
 
-        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, notification)
     }
 
     private fun updateNotificationToNormal() {
-        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, buildNotification())
     }
 
@@ -705,10 +720,8 @@ class PhoneGuardService : Service() {
         val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? KeyguardManager
         val isLocked = keyguardManager?.isDeviceLocked == true || keyguardManager?.isKeyguardLocked == true
         if (isLocked) {
-            Log.i(TAG, "Device is locked — scheduling 60s command polling")
             CommandPollWorker.schedule60sPoll(applicationContext)
         } else {
-            Log.i(TAG, "Device is unlocked/active — scheduling 15-minute command polling")
             CommandPollWorker.cancel60sPoll(applicationContext)
             CommandPollWorker.schedulePeriodicPoll(applicationContext)
         }

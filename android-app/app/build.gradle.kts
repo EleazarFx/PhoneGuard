@@ -110,6 +110,9 @@ dependencies {
     // ML Kit Face Detection
     implementation(libs.mlkit.face.detection)
 
+    // Play Services Location
+    implementation(libs.play.services.location)
+
     // Coil for Image Loading
     implementation(libs.coil.compose)
     implementation(libs.timber)

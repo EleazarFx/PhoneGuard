@@ -1,30 +1,38 @@
 package mw.phoneguard.app
 
 import android.Manifest
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import mw.phoneguard.app.data.storage.TokenStore
-import mw.phoneguard.app.services.AppSessionManager
-import mw.phoneguard.app.services.PhoneGuardAdminReceiver
+import mw.phoneguard.app.services.OemAutoStartHelper
+import mw.phoneguard.app.services.PhoneGuardService
+import mw.phoneguard.app.services.ProtectionChecklistHelper
 import mw.phoneguard.app.ui.activity.ActivityScreen
-import mw.phoneguard.app.ui.auth.*
+import mw.phoneguard.app.ui.auth.AuthViewModel
+import mw.phoneguard.app.ui.auth.ForgotPasswordScreen
+import mw.phoneguard.app.ui.auth.LoginScreen
+import mw.phoneguard.app.ui.auth.NewDeviceVerifyScreen
+import mw.phoneguard.app.ui.auth.RegisterScreen
+import mw.phoneguard.app.ui.auth.ResetPasswordScreen
+import mw.phoneguard.app.ui.auth.ResetStep
 import mw.phoneguard.app.ui.contacts.ContactsScreen
 import mw.phoneguard.app.ui.home.HomeScreen
 import mw.phoneguard.app.ui.home.HomeViewModel
@@ -36,51 +44,53 @@ class MainActivity : ComponentActivity() {
     private val authViewModel: AuthViewModel by viewModels()
     private val homeViewModel: HomeViewModel by viewModels()
 
+    private val bgLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            android.util.Log.w("PhoneGuard", "ACCESS_BACKGROUND_LOCATION denied — opening settings")
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = android.net.Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            } catch (_: Exception) {}
+        }
+        homeViewModel.refreshAdminState()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Requirement 15g: FLAG_SECURE on whole app (no screenshots, no recent-apps thumbnails)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
 
-        // Ask for notification permission on Android 13+ (for the foreground service notification)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val launcher = registerForActivityResult(
                 ActivityResultContracts.RequestPermission()
             ) { granted ->
                 if (!granted) {
-                    android.util.Log.w(
-                        "PhoneGuard",
-                        "POST_NOTIFICATIONS denied — persistent notification may be hidden"
-                    )
+                    android.util.Log.w("PhoneGuard", "POST_NOTIFICATIONS denied")
                 }
             }
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        // Ask for camera permission for evidence capture
         val cameraLauncher = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
             if (!granted) {
-                android.util.Log.w(
-                    "PhoneGuard",
-                    "CAMERA permission denied — stealth photo evidence capture will be blocked"
-                )
+                android.util.Log.w("PhoneGuard", "CAMERA permission denied")
             }
         }
         cameraLauncher.launch(Manifest.permission.CAMERA)
 
-        // Ask for location permissions for evidence & tracking
         val locationLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { permissions ->
             val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
             val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
             if (!fineGranted && !coarseGranted) {
-                android.util.Log.w(
-                    "PhoneGuard",
-                    "LOCATION permissions denied — evidence location and tracking will be disabled"
-                )
+                android.util.Log.w("PhoneGuard", "LOCATION permissions denied")
             }
         }
         locationLauncher.launch(
@@ -92,14 +102,33 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PhoneGuardTheme {
-                PhoneGuardApp(authViewModel, homeViewModel)
+                PhoneGuardApp(
+                    authViewModel = authViewModel,
+                    homeViewModel = homeViewModel,
+                    onRequestBackgroundLocation = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            bgLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                        } else {
+                            homeViewModel.refreshAdminState()
+                        }
+                    }
+                )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        homeViewModel.refreshAdminState()
     }
 }
 
 @Composable
-fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
+fun PhoneGuardApp(
+    authViewModel: AuthViewModel,
+    homeViewModel: HomeViewModel,
+    onRequestBackgroundLocation: () -> Unit
+) {
     val state by authViewModel.uiState.collectAsState()
     val context = LocalContext.current
 
@@ -115,7 +144,7 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
 
                 LaunchedEffect(Unit) {
                     homeViewModel.triggerSync()
-                    mw.phoneguard.app.services.PhoneGuardService.start(context)
+                    PhoneGuardService.start(context)
                 }
 
                 when (currentScreen) {
@@ -127,27 +156,33 @@ fun PhoneGuardApp(authViewModel: AuthViewModel, homeViewModel: HomeViewModel) {
                         lastCheckIn = homeState.lastCheckInText,
                         trustedContactsCount = homeState.trustedContactsCount,
                         unsyncedEventCount = homeState.unsyncedEventCount,
+                        protectionState = homeState.protectionState,
+                        currentTrackingMode = homeState.currentTrackingMode,
                         onToggleAlertMode = homeViewModel::toggleAlertMode,
                         onEnableAdminClick = {
-                            val adminComponent = ComponentName(
-                                context,
-                                PhoneGuardAdminReceiver::class.java
-                            )
-                            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
-                                putExtra(
-                                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                    "PhoneGuard needs this to detect wrong lock-screen PIN attempts."
-                                )
-                            }
-                            context.startActivity(intent)
+                            ProtectionChecklistHelper.openDeviceAdminSettings(context)
                             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                                 homeViewModel.refreshAdminState()
                             }, 1500)
                         },
+                        onRequestBackgroundLocation = onRequestBackgroundLocation,
+                        onDisableBatteryOptimization = {
+                            ProtectionChecklistHelper.openBatteryOptimizationSettings(context)
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                homeViewModel.refreshAdminState()
+                            }, 1500)
+                        },
+                        onConfigureAutoStart = {
+                            ProtectionChecklistHelper.markAutoStartAcknowledged(context)
+                            val opened = OemAutoStartHelper.openAutoStartSettings(context)
+                            if (opened) {
+                                Toast.makeText(context, "Grant Auto-Start permission for ${OemAutoStartHelper.getManufacturerName()}", Toast.LENGTH_LONG).show()
+                            }
+                            homeViewModel.refreshAdminState()
+                        },
                         onResetOriginalSim = {
                             homeViewModel.resetOriginalSim { _, msg ->
-                                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             }
                         },
                         onTestDecoyShutdown = {

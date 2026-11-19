@@ -338,6 +338,12 @@ class TokenStore private constructor(context: Context) {
     fun getCrashReportConsent(): Boolean = prefs.getBoolean("key_crash_consent", false)
     fun setCrashReportConsent(enabled: Boolean) = prefs.edit().putBoolean("key_crash_consent", enabled).apply()
 
+    fun isAutoStartAcknowledged(): Boolean = prefs.getBoolean(KEY_AUTO_START_ACK, false)
+    fun setAutoStartAcknowledged(acknowledged: Boolean) = prefs.edit().putBoolean(KEY_AUTO_START_ACK, acknowledged).apply()
+
+    fun getTrackingModeName(): String = prefs.getString(KEY_CURRENT_TRACKING_MODE, "NORMAL") ?: "NORMAL"
+    fun saveTrackingModeName(modeName: String) = prefs.edit().putString(KEY_CURRENT_TRACKING_MODE, modeName).apply()
+
     companion object {
         @Volatile
         private var INSTANCE: TokenStore? = null
@@ -395,5 +401,7 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_SCHEDULED_START_MINUTE = "scheduled_start_minute"
         private const val KEY_SCHEDULED_END_HOUR = "scheduled_end_hour"
         private const val KEY_SCHEDULED_END_MINUTE = "scheduled_end_minute"
+        private const val KEY_AUTO_START_ACK = "auto_start_acknowledged"
+        private const val KEY_CURRENT_TRACKING_MODE = "current_tracking_mode"
     }
 }

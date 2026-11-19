@@ -12,10 +12,12 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import com.google.android.gms.tasks.Task
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.resume
 
 enum class TrackingMode(
     val intervalMs: Long,
@@ -79,23 +81,21 @@ object AdaptiveLocationManager {
             return@withContext null
         }
 
-        // Try FusedLocationProviderClient first
         val fusedClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
         val cancellationSource = CancellationTokenSource()
 
         try {
-            val fusedLocation = fusedClient.getCurrentLocation(mode.priority, cancellationSource.token).await()
+            val fusedLocation = fusedClient.getCurrentLocation(mode.priority, cancellationSource.token).awaitTask()
             if (fusedLocation != null) {
                 Log.d(TAG, "Acquired Fused Location: lat=${fusedLocation.latitude}, lng=${fusedLocation.longitude}, acc=${fusedLocation.accuracy}m (mode=${mode.name})")
                 return@withContext fusedLocation
             }
         } catch (e: Exception) {
-            Log.w(TAG, "FusedLocationProviderClient error (${e.message}), falling back to lastKnownLocation or LocationManager")
+            Log.w(TAG, "FusedLocationProviderClient error (${e.message}), falling back")
         }
 
-        // Fallback 1: Fused lastLocation
         try {
-            val lastFused = fusedClient.lastLocation.await()
+            val lastFused = fusedClient.lastLocation.awaitTask()
             if (lastFused != null) {
                 Log.d(TAG, "Using last known Fused Location: lat=${lastFused.latitude}, lng=${lastFused.longitude}")
                 return@withContext lastFused
@@ -104,12 +104,11 @@ object AdaptiveLocationManager {
             Log.w(TAG, "Fused lastLocation fallback failed: ${e.message}")
         }
 
-        // Fallback 2: Raw LocationManager legacy providers
         return@withContext fallbackLocationManager(context)
     }
 
     @SuppressLint("MissingPermission")
-    private fun fallbackLocationManager(context: Context): Location? {
+    fun fallbackLocationManager(context: Context): Location? {
         val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
         return try {
             val isGps = try { locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) } catch (_: Exception) { false }
@@ -133,9 +132,18 @@ object AdaptiveLocationManager {
         }
     }
 
-    /**
-     * Evaluates whether a newly acquired location should trigger a new server dispatch or if device is stationary.
-     */
+    private suspend fun <T> Task<T>.awaitTask(): T? = suspendCancellableCoroutine { continuation ->
+        addOnSuccessListener { result ->
+            if (continuation.isActive) continuation.resume(result)
+        }
+        addOnFailureListener {
+            if (continuation.isActive) continuation.resume(null)
+        }
+        addOnCanceledListener {
+            if (continuation.isActive) continuation.resume(null)
+        }
+    }
+
     fun evaluateLocationMovement(
         newLocation: Location?,
         mode: TrackingMode

@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
+import mw.phoneguard.app.services.ProtectionChecklistHelper
+import mw.phoneguard.app.services.ProtectionChecklistState
+import mw.phoneguard.app.services.TrackingMode
 
 data class HomeUiState(
     val userEmail: String? = null,
@@ -18,13 +21,21 @@ data class HomeUiState(
     val alertModeArmed: Boolean = false,
     val lastCheckInText: String = "Just now",
     val trustedContactsCount: Int = 0,
-    val unsyncedEventCount: Int = 0
+    val unsyncedEventCount: Int = 0,
+    val protectionState: ProtectionChecklistState = ProtectionChecklistState(
+        hasBackgroundLocation = false,
+        hasDeviceAdmin = false,
+        isBatteryOptimizationDisabled = false,
+        isAutoStartConfigured = false
+    ),
+    val currentTrackingMode: TrackingMode = TrackingMode.NORMAL
 )
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val tokenStore = TokenStore.get(application.applicationContext)
     private val database = PhoneGuardDatabase.get(application.applicationContext)
+    private val syncManager = mw.phoneguard.app.data.sync.SyncManager(application.applicationContext)
 
     private val _uiState = MutableStateFlow(
         HomeUiState(
@@ -34,10 +45,17 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             alertModeArmed = tokenStore.isAlertModeArmed(),
             lastCheckInText = computeLastCheckInText(),
             trustedContactsCount = tokenStore.getTrustedContacts().size,
-            unsyncedEventCount = 0
+            unsyncedEventCount = 0,
+            protectionState = ProtectionChecklistHelper.getProtectionState(application.applicationContext),
+            currentTrackingMode = getStoredTrackingMode()
         )
     )
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+
+    private fun getStoredTrackingMode(): TrackingMode {
+        val modeName = tokenStore.getTrackingModeName()
+        return try { TrackingMode.valueOf(modeName) } catch (_: Exception) { TrackingMode.NORMAL }
+    }
 
     private fun computeLastCheckInText(): String {
         val lastCheckIn = tokenStore.getLastCheckInTime()
@@ -54,13 +72,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         Log.d("HomeViewModel", "Initializing HomeViewModel; deviceId=${tokenStore.getDeviceId()}")
-        // Observe the pending-sync count from Room in real time
         viewModelScope.launch {
             database.eventDao().observeUnsyncedCount().collect { count ->
                 _uiState.value = _uiState.value.copy(unsyncedEventCount = count)
             }
         }
-        // Observe contacts count from Room in real time
         viewModelScope.launch {
             database.contactDao().observeAll().collect { contacts ->
                 _uiState.value = _uiState.value.copy(trustedContactsCount = contacts.size)
@@ -68,31 +84,32 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-
     fun toggleAlertMode(armed: Boolean) {
         tokenStore.saveAlertModeArmed(armed)
         _uiState.value = _uiState.value.copy(alertModeArmed = armed)
 
-        val context = getApplication<android.app.Application>()
+        val context = getApplication<Application>()
         try {
             mw.phoneguard.app.services.PhoneGuardService.setAlertMode(context, armed)
-            android.util.Log.i("HomeViewModel", "Alert Mode toggle → $armed")
+            Log.i("HomeViewModel", "Alert Mode toggle → $armed")
         } catch (e: Exception) {
-            android.util.Log.e("HomeViewModel", "Failed to toggle Alert Mode: ${e.message}", e)
+            Log.e("HomeViewModel", "Failed to toggle Alert Mode: ${e.message}", e)
         }
     }
 
     fun refresh() {
+        val context = getApplication<Application>().applicationContext
+        val pState = ProtectionChecklistHelper.getProtectionState(context)
         _uiState.value = _uiState.value.copy(
             userEmail = tokenStore.getUserEmail(),
             deviceRegistered = tokenStore.hasDeviceRegistered(),
             trustedContactsCount = tokenStore.getTrustedContacts().size,
-            lastCheckInText = computeLastCheckInText()
+            lastCheckInText = computeLastCheckInText(),
+            protectionState = pState,
+            isAdminActive = pState.hasDeviceAdmin,
+            currentTrackingMode = getStoredTrackingMode()
         )
     }
-
-
-    private val syncManager = mw.phoneguard.app.data.sync.SyncManager(application.applicationContext)
 
     fun triggerSync() {
         viewModelScope.launch {
@@ -100,11 +117,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-
     private fun checkAdminActive(): Boolean {
-        val context = getApplication<android.app.Application>()
-        val dpm = context.getSystemService(android.content.Context.DEVICE_POLICY_SERVICE)
-                as? android.app.admin.DevicePolicyManager ?: return false
+        val context = getApplication<Application>()
+        val dpm = context.getSystemService(android.content.Context.DEVICE_POLICY_SERVICE) as? android.app.admin.DevicePolicyManager ?: return false
         val component = android.content.ComponentName(
             context,
             mw.phoneguard.app.services.PhoneGuardAdminReceiver::class.java
@@ -113,13 +128,19 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshAdminState() {
-        _uiState.value = _uiState.value.copy(isAdminActive = checkAdminActive())
+        val context = getApplication<Application>().applicationContext
+        val pState = ProtectionChecklistHelper.getProtectionState(context)
+        _uiState.value = _uiState.value.copy(
+            isAdminActive = pState.hasDeviceAdmin,
+            protectionState = pState,
+            currentTrackingMode = getStoredTrackingMode()
+        )
     }
 
     fun refreshFromRoom() {
         viewModelScope.launch {
             val count = database.eventDao().getUnsynced().size
-            android.util.Log.d("HomeViewModel", "Manual refresh: count=$count")
+            Log.d("HomeViewModel", "Manual refresh: count=$count")
             _uiState.value = _uiState.value.copy(unsyncedEventCount = count)
         }
     }
@@ -149,64 +170,30 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 if (operatorCode.isNotBlank()) codes.add(operatorCode)
                 if (subId.isNotBlank()) subscriptions.add(subId)
 
-                try {
-                    val sm = context.getSystemService(android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE)
-                            as? android.telephony.SubscriptionManager
-                    if (sm != null) {
-                        @Suppress("MissingPermission")
-                        val activeList = sm.activeSubscriptionInfoList
-                        if (!activeList.isNullOrEmpty()) {
-                            for (sub in activeList) {
-                                if (!sub.carrierName.isNullOrBlank()) operators.add(sub.carrierName.toString())
-                                if (!sub.countryIso.isNullOrBlank()) countries.add(sub.countryIso.toString())
-                                val mccMnc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                                    "${sub.mccString.orEmpty()}${sub.mncString.orEmpty()}"
-                                } else ""
-                                if (mccMnc.isNotBlank()) codes.add(mccMnc)
-                                val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
-                                subscriptions.add("${sub.subscriptionId}:$carrier")
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-
-                if (codes.isEmpty() && operatorCode.isNotBlank()) codes.add(operatorCode)
-
-                if (codes.isNotEmpty()) {
-                    tokenStore.resetOriginalSimIdentity(operators, countries, codes, subscriptions)
-                    tokenStore.saveSimIdentity(operator, country, operatorCode, subId)
-                    onResult(true, "Original SIM baseline updated successfully (${codes.size} SIM(s))")
-                } else {
-                    onResult(false, "No active SIM detected to set as baseline")
-                }
+                tokenStore.resetOriginalSimIdentity(operators, countries, codes, subscriptions)
+                onResult(true, "Trusted SIM identity successfully reset to active SIM.")
             } catch (e: Exception) {
-                Log.e("HomeViewModel", "Failed to reset original SIM", e)
-                onResult(false, "Error: ${e.message}")
+                onResult(false, "Failed to reset SIM identity: ${e.message}")
             }
         }
     }
 
-    private fun getActiveSubscriptionId(context: Application): String {
+    private fun getActiveSubscriptionId(context: android.content.Context): String {
         try {
-            val sm = context.getSystemService(android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE)
-                    as? android.telephony.SubscriptionManager
-            if (sm != null) {
-                @Suppress("MissingPermission")
-                val activeList = sm.activeSubscriptionInfoList
-                if (!activeList.isNullOrEmpty()) {
-                    return activeList.joinToString(",") { sub ->
-                        val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
-                        "${sub.subscriptionId}:$carrier"
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                val sm = context.getSystemService(android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
+                if (sm != null) {
+                    @Suppress("MissingPermission")
+                    val activeList = sm.activeSubscriptionInfoList
+                    if (!activeList.isNullOrEmpty()) {
+                        return activeList.joinToString(",") { sub ->
+                            val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
+                            "${sub.subscriptionId}:$carrier"
+                        }
                     }
                 }
             }
         } catch (_: Exception) {}
         return ""
     }
-
-
-
-
-
-
 }

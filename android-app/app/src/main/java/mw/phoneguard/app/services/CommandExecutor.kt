@@ -39,6 +39,7 @@ class CommandExecutor(private val context: Context) {
                 "MESSAGE" -> executeMessage(command)
                 "LOCATE" -> executeLocate()
                 "LIVE_TRACK" -> executeLiveTrack(command)
+                "THEFT_MODE", "STOLEN" -> executeTheftMode()
                 "WIPE" -> executeWipe()
                 else -> Result.failure(IllegalArgumentException("unknown_command"))
             }
@@ -144,7 +145,33 @@ class CommandExecutor(private val context: Context) {
         event = EvidenceCapturer(context).captureAndAttachEvidence(event)
         db.eventDao().upsert(event)
         SyncManager(context).syncPendingEvents()
-        Log.i(TAG, "Locate command executed: posted fresh location ping")
+        PhoneGuardService.setTrackingMode(context, TrackingMode.THEFT)
+        Log.i(TAG, "Locate command executed: escalated to THEFT mode")
+        return Result.success(Unit)
+    }
+
+    private suspend fun executeTheftMode(): Result<Unit> {
+        Log.w(TAG, "Activating THEFT_MODE via remote command")
+        PhoneGuardService.setTrackingMode(context, TrackingMode.THEFT)
+
+        // Attempt immediate device lock if admin active
+        try {
+            executeLock()
+        } catch (_: Exception) {}
+
+        val tokenStore = TokenStore.get(context)
+        val deviceId = tokenStore.getDeviceId() ?: return Result.success(Unit)
+
+        var event = EventEntity(
+            deviceId = deviceId,
+            type = "location_ping",
+            timestamp = System.currentTimeMillis(),
+            captureStatus = "theft_mode_command",
+            clientSeq = System.currentTimeMillis()
+        )
+        event = EvidenceCapturer(context).captureAndAttachEvidence(event, capturePhoto = true)
+        PhoneGuardDatabase.get(context).eventDao().upsert(event)
+        SyncManager(context).syncPendingEvents()
         return Result.success(Unit)
     }
 
