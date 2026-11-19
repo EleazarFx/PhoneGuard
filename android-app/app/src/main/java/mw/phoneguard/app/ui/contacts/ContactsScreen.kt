@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -197,11 +198,20 @@ fun ContactsScreen(
                                         color = TextPrimary
                                     )
                                     Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        text = contact.phone,
-                                        fontSize = 13.sp,
-                                        color = TextMuted
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = contact.phone,
+                                            fontSize = 13.sp,
+                                            color = TextMuted
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = if (contact.lastSyncedTimestamp > 0L) "Synced" else "Pending Sync",
+                                            fontSize = 11.sp,
+                                            color = if (contact.lastSyncedTimestamp > 0L) GuardTeal else WarnAmber,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
                                 }
                                 TextButton(onClick = { contactToDelete = contact }) {
                                     Text("Remove", color = WarnAmber, fontSize = 13.sp)

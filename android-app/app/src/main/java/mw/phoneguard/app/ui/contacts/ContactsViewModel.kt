@@ -13,6 +13,7 @@ import mw.phoneguard.app.data.api.ContactApi
 import mw.phoneguard.app.data.local.ContactEntity
 import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
+import mw.phoneguard.app.data.sync.SyncManager
 import java.util.Date
 
 data class ContactsUiState(
@@ -28,6 +29,7 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     private val database = PhoneGuardDatabase.get(application)
     private val contactDao = database.contactDao()
     private val contactApi = ContactApi()
+    private val syncManager = SyncManager(application)
 
     private val _uiState = MutableStateFlow(ContactsUiState())
     val uiState: StateFlow<ContactsUiState> = _uiState.asStateFlow()
@@ -46,6 +48,16 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
             val token = tokenStore.getUserAccessToken()
+
+            // Try syncing any pending offline contacts first
+            if (token != null) {
+                try {
+                    syncManager.syncPendingContacts()
+                } catch (e: Exception) {
+                    Log.w("ContactsViewModel", "Failed to sync pending contacts: ${e.message}")
+                }
+            }
+
             if (token == null) {
                 loadLocalState(isOfflineMode = true)
                 return@launch
@@ -83,8 +95,13 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
 
     private suspend fun loadLocalState(isOfflineMode: Boolean, error: String? = null) {
         val entities = contactDao.getAll()
+        val hasUnsynced = entities.any { it.lastSyncedTimestamp == 0L }
         val lastSync = contactDao.getLastSyncedTime() ?: 0L
-        val syncText = if (lastSync > 0L) formatTimestamp(lastSync) else "Never"
+        val syncText = when {
+            hasUnsynced -> "Pending sync"
+            lastSync > 0L -> formatTimestamp(lastSync)
+            else -> "Never"
+        }
         tokenStore.saveTrustedContacts(entities.map { it.name to it.phone })
         _uiState.value = _uiState.value.copy(
             contacts = entities,
@@ -111,22 +128,21 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
                 val result = contactApi.createContact(token, name.trim(), phone.trim())
                 if (result.isSuccess) {
                     refresh()
-                } else {
-                    _uiState.value = _uiState.value.copy(errorMessage = result.exceptionOrNull()?.message ?: "Failed to add contact")
+                    return@launch
                 }
-            } else {
-                val newId = java.util.UUID.randomUUID().toString()
-                val now = System.currentTimeMillis()
-                val entity = ContactEntity(
-                    id = newId,
-                    name = name.trim(),
-                    phone = phone.trim(),
-                    createdAt = now.toString(),
-                    lastSyncedTimestamp = now
-                )
-                contactDao.insert(entity)
-                loadLocalState(isOfflineMode = true, error = "Added offline")
             }
+
+            // If token is null or creation API failed, save locally with lastSyncedTimestamp = 0L (pending sync)
+            val newId = java.util.UUID.randomUUID().toString()
+            val entity = ContactEntity(
+                id = newId,
+                name = name.trim(),
+                phone = phone.trim(),
+                createdAt = System.currentTimeMillis().toString(),
+                lastSyncedTimestamp = 0L
+            )
+            contactDao.insert(entity)
+            loadLocalState(isOfflineMode = true, error = "Saved locally (pending sync)")
         }
     }
 

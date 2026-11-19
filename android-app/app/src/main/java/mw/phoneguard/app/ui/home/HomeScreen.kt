@@ -333,10 +333,11 @@ fun HomeScreen(
                     ) {
                         Text("Pending sync", fontSize = 14.sp, color = TextMuted)
                         Text(
-                            if (unsyncedEventCount == 0) "All synced"
+                            if (!deviceRegistered) "Not registered"
+                            else if (unsyncedEventCount == 0) "All synced"
                             else "$unsyncedEventCount event${if (unsyncedEventCount == 1) "" else "s"}",
                             fontSize = 14.sp,
-                            color = if (unsyncedEventCount > 0) GuardTeal else TextPrimary,
+                            color = if (!deviceRegistered) WarnAmber else if (unsyncedEventCount > 0) GuardTeal else TextPrimary,
                             fontWeight = FontWeight.Medium
                         )
                     }

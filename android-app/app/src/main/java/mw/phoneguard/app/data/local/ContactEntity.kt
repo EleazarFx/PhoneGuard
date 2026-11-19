@@ -10,5 +10,5 @@ data class ContactEntity(
     val phone: String,
     val email: String? = null,
     val createdAt: String = "",
-    val lastSyncedTimestamp: Long = System.currentTimeMillis()
+    val lastSyncedTimestamp: Long = 0L
 )

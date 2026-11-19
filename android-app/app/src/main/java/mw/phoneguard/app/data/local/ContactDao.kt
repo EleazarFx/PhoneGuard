@@ -31,4 +31,7 @@ interface ContactDao {
 
     @Query("SELECT MAX(lastSyncedTimestamp) FROM trusted_contacts")
     suspend fun getLastSyncedTime(): Long?
+
+    @Query("SELECT * FROM trusted_contacts WHERE lastSyncedTimestamp = 0 ORDER BY createdAt ASC")
+    suspend fun getUnsynced(): List<ContactEntity>
 }
