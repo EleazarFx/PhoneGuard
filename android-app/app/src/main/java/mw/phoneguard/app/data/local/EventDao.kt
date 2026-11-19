@@ -45,4 +45,8 @@ interface EventDao {
     /** Count of unsynced events (for the badge in the home screen). */
     @Query("SELECT COUNT(*) FROM events WHERE syncedAt IS NULL AND isDismissed = 0")
     fun observeUnsyncedCount(): Flow<Int>
+
+    /** Update device ID for all pending unsynced events if device was re-registered. */
+    @Query("UPDATE events SET deviceId = :newDeviceId WHERE syncedAt IS NULL")
+    suspend fun updateUnsyncedDeviceId(newDeviceId: String): Int
 }

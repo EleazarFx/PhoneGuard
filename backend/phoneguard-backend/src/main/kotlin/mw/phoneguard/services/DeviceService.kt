@@ -117,6 +117,10 @@ class DeviceService {
                 return@transaction null
             }
 
+            // Verify device exists before inserting event to prevent foreign key constraint failure
+            val deviceExists = Devices.selectAll().where { Devices.id eq deviceUuid }.any()
+            if (!deviceExists) return@transaction null
+
             // Compute a simple threat level using the rule-based scoring from spec Section 8.2.
             // We'll move this into a dedicated ThreatScorer later.
             val threatLevel = computeThreatLevel(req.type)

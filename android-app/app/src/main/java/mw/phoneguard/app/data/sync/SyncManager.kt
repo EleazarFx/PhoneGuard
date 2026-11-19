@@ -80,13 +80,21 @@ class SyncManager(context: Context) {
         // Also trigger contact sync whenever event sync runs
         syncPendingContacts()
 
-        val deviceId = tokenStore.getDeviceId()
-        val deviceToken = tokenStore.getDeviceToken()
-
-        if (deviceId == null || deviceToken == null) {
-            Log.w(TAG, "Device not registered. Cannot sync events.")
-            return@withContext
+        val (initialDeviceId, initialDeviceToken) = run {
+            val dId = tokenStore.getDeviceId()
+            val dTok = tokenStore.getDeviceToken()
+            if (dId != null && dTok != null) {
+                Pair(dId, dTok)
+            } else {
+                reRegisterDeviceIfNeeded() ?: run {
+                    Log.w(TAG, "Device not registered. Cannot sync events.")
+                    return@withContext
+                }
+            }
         }
+
+        var currentDeviceId = initialDeviceId
+        var currentDeviceToken = initialDeviceToken
 
         val unsynced = db.eventDao().getUnsynced()
         if (unsynced.isEmpty()) {
@@ -97,19 +105,55 @@ class SyncManager(context: Context) {
         Log.d(TAG, "Attempting to sync ${unsynced.size} events...")
 
         for (event in unsynced) {
-            when (val result = deviceApi.postEvent(deviceToken, deviceId, event)) {
+            val eventToSync = if (event.deviceId != currentDeviceId) event.copy(deviceId = currentDeviceId) else event
+            when (val result = deviceApi.postEvent(currentDeviceToken, currentDeviceId, eventToSync)) {
                 is ApiResult.Success -> {
                     val now = System.currentTimeMillis()
-                    db.eventDao().markSynced(event.id, now)
-                    Log.d(TAG, "✅ Synced event ${event.id} (${event.type})")
+                    db.eventDao().markSynced(eventToSync.id, now)
+                    Log.d(TAG, "✅ Synced event ${eventToSync.id} (${eventToSync.type})")
                 }
                 is ApiResult.Failure -> {
-                    Log.e(TAG, "❌ Failed to sync event ${event.id}: ${result.message}")
-                    // Break the loop on network failure so we don't hammer the server.
-                    // WorkManager will retry the whole batch later.
+                    Log.e(TAG, "❌ Failed to sync event ${eventToSync.id}: ${result.message}")
+                    if (result.message.contains("Device not found", ignoreCase = true) ||
+                        result.message.contains("not authorize", ignoreCase = true) ||
+                        result.message.contains("404", ignoreCase = true)) {
+                        val reReg = reRegisterDeviceIfNeeded()
+                        if (reReg != null) {
+                            currentDeviceId = reReg.first
+                            currentDeviceToken = reReg.second
+                            val retryEvent = eventToSync.copy(deviceId = currentDeviceId)
+                            val retryResult = deviceApi.postEvent(currentDeviceToken, currentDeviceId, retryEvent)
+                            if (retryResult is ApiResult.Success) {
+                                val now = System.currentTimeMillis()
+                                db.eventDao().markSynced(retryEvent.id, now)
+                                Log.d(TAG, "✅ Synced event ${retryEvent.id} (${retryEvent.type}) after re-registration")
+                                continue
+                            }
+                        }
+                    }
                     break
                 }
             }
         }
+    }
+
+    private suspend fun reRegisterDeviceIfNeeded(): Pair<String, String>? {
+        val userToken = tokenStore.getUserAccessToken() ?: return null
+        val deviceName = android.os.Build.MODEL ?: "Android Device"
+        Log.i(TAG, "Attempting automatic device re-registration with backend...")
+        val regResult = deviceApi.register(
+            userAccessToken = userToken,
+            deviceName = deviceName,
+            model = android.os.Build.MODEL
+        )
+        if (regResult is ApiResult.Success) {
+            val newId = regResult.value.deviceId
+            val newToken = regResult.value.deviceToken
+            tokenStore.saveDeviceIdentity(newId, newToken)
+            db.eventDao().updateUnsyncedDeviceId(newId)
+            Log.i(TAG, "Successfully re-registered device with ID $newId")
+            return Pair(newId, newToken)
+        }
+        return null
     }
 }

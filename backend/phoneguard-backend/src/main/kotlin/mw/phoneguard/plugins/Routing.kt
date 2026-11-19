@@ -337,7 +337,7 @@ fun Application.configureRouting(jwtService: JwtService, emailService: EmailServ
                 val event = deviceService.postEvent(authed.deviceId, req)
 
                 if (event == null) {
-                    call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid event data"))
+                    call.respond(HttpStatusCode.NotFound, ErrorResponse("Device not found or invalid event data"))
                     return@post
                 }
 
