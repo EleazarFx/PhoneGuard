@@ -36,11 +36,13 @@ class PasswordResetService(private val emailService: EmailService) {
         }
 
         if (otpToSend != null) {
+            println("🔑 [OTP GENERATED] Password Reset Code for $email is: $otpToSend")
             try {
                 emailService.sendPasswordResetOtp(email, otpToSend)
-                println("📧 OTP sent to $email")
+                println("📧 OTP sent via email to $email")
             } catch (e: Exception) {
-                println("❌ Failed to send email: ${e.message}")
+                println("❌ Failed to send email to $email: ${e.message}")
+                println("👉 Use OTP Code: $otpToSend (Printed in console for development/offline testing)")
             }
         }
         return true // Always true to prevent email enumeration

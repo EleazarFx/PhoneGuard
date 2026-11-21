@@ -109,11 +109,13 @@ class NewDeviceService(private val emailService: EmailService) {
             }
         }
 
+        println("🔑 [OTP GENERATED] New Device Verification Code for ${user.email} is: $otp")
         try {
             emailService.sendNewDeviceVerificationCode(user.email, otp)
-            println("📧 New device verification code sent to ${user.email}")
+            println("📧 New device verification code sent via email to ${user.email}")
         } catch (e: Exception) {
             println("❌ Failed to send verification email: ${e.message}")
+            println("👉 Use Verification Code: $otp (Printed in console for development/offline testing)")
         }
         return true
     }

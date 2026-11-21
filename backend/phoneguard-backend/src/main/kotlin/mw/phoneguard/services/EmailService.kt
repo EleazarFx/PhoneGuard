@@ -24,8 +24,14 @@ class EmailService(config: ApplicationConfig) {
         val props = Properties().apply {
             put("mail.smtp.auth", "true")
             put("mail.smtp.starttls.enable", "true")
+            put("mail.smtp.starttls.required", "true")
             put("mail.smtp.host", smtpHost)
             put("mail.smtp.port", smtpPort)
+            put("mail.smtp.connectiontimeout", "5000")
+            put("mail.smtp.timeout", "5000")
+            put("mail.smtp.writetimeout", "5000")
+            put("mail.smtp.ssl.protocols", "TLSv1.2 TLSv1.3")
+            put("mail.smtp.ssl.trust", smtpHost)
         }
         Session.getInstance(props, object : Authenticator() {
             override fun getPasswordAuthentication() =

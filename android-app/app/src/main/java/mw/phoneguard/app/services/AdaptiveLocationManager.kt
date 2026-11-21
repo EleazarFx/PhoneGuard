@@ -84,27 +84,46 @@ object AdaptiveLocationManager {
         val fusedClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
         val cancellationSource = CancellationTokenSource()
 
-        try {
-            val fusedLocation = fusedClient.getCurrentLocation(mode.priority, cancellationSource.token).awaitTask()
-            if (fusedLocation != null) {
-                Log.d(TAG, "Acquired Fused Location: lat=${fusedLocation.latitude}, lng=${fusedLocation.longitude}, acc=${fusedLocation.accuracy}m (mode=${mode.name})")
-                return@withContext fusedLocation
-            }
+        val fusedLocation = try {
+            fusedClient.getCurrentLocation(mode.priority, cancellationSource.token).awaitTask()
         } catch (e: Exception) {
             Log.w(TAG, "FusedLocationProviderClient error (${e.message}), falling back")
+            null
         }
 
-        try {
-            val lastFused = fusedClient.lastLocation.awaitTask()
-            if (lastFused != null) {
-                Log.d(TAG, "Using last known Fused Location: lat=${lastFused.latitude}, lng=${lastFused.longitude}")
-                return@withContext lastFused
-            }
+        if (fusedLocation != null) {
+            Log.d(TAG, "Acquired Fused Location: lat=${fusedLocation.latitude}, lng=${fusedLocation.longitude}, acc=${fusedLocation.accuracy}m (mode=${mode.name})")
+            updateLastReported(fusedLocation)
+            return@withContext fusedLocation
+        }
+
+        val lastFused = try {
+            fusedClient.lastLocation.awaitTask()
         } catch (e: Exception) {
             Log.w(TAG, "Fused lastLocation fallback failed: ${e.message}")
+            null
         }
 
-        return@withContext fallbackLocationManager(context)
+        if (lastFused != null) {
+            Log.d(TAG, "Using last known Fused Location: lat=${lastFused.latitude}, lng=${lastFused.longitude}")
+            updateLastReported(lastFused)
+            return@withContext lastFused
+        }
+
+        val legacyLoc = fallbackLocationManager(context)
+        if (legacyLoc != null) {
+            updateLastReported(legacyLoc)
+            return@withContext legacyLoc
+        }
+
+        val cachedLoc = lastReportedLocation.get()
+        if (cachedLoc != null) {
+            Log.i(TAG, "Using cached lastReportedLocation: lat=${cachedLoc.latitude}, lng=${cachedLoc.longitude}")
+            return@withContext cachedLoc
+        }
+
+        Log.w(TAG, "Adaptive location unavailable: No GPS/Network fix or cached location found.")
+        return@withContext null
     }
 
     @SuppressLint("MissingPermission")
