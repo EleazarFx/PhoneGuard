@@ -344,6 +344,27 @@ class TokenStore private constructor(context: Context) {
     fun getTrackingModeName(): String = prefs.getString(KEY_CURRENT_TRACKING_MODE, "NORMAL") ?: "NORMAL"
     fun saveTrackingModeName(modeName: String) = prefs.edit().putString(KEY_CURRENT_TRACKING_MODE, modeName).apply()
 
+    fun saveLastKnownLocation(lat: Double, lng: Double, accuracy: Float = 0f) {
+        prefs.edit()
+            .putFloat(KEY_LAST_KNOWN_LAT, lat.toFloat())
+            .putFloat(KEY_LAST_KNOWN_LNG, lng.toFloat())
+            .putFloat(KEY_LAST_KNOWN_ACCURACY, accuracy)
+            .putLong(KEY_LAST_KNOWN_TIME, System.currentTimeMillis())
+            .apply()
+    }
+
+    fun getLastKnownLat(): Double? {
+        if (!prefs.contains(KEY_LAST_KNOWN_LAT)) return null
+        return prefs.getFloat(KEY_LAST_KNOWN_LAT, 0f).toDouble()
+    }
+
+    fun getLastKnownLng(): Double? {
+        if (!prefs.contains(KEY_LAST_KNOWN_LNG)) return null
+        return prefs.getFloat(KEY_LAST_KNOWN_LNG, 0f).toDouble()
+    }
+
+    fun getLastKnownAccuracy(): Float = prefs.getFloat(KEY_LAST_KNOWN_ACCURACY, 0f)
+
     companion object {
         @Volatile
         private var INSTANCE: TokenStore? = null
@@ -403,5 +424,9 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_SCHEDULED_END_MINUTE = "scheduled_end_minute"
         private const val KEY_AUTO_START_ACK = "auto_start_acknowledged"
         private const val KEY_CURRENT_TRACKING_MODE = "current_tracking_mode"
+        private const val KEY_LAST_KNOWN_LAT = "last_known_lat"
+        private const val KEY_LAST_KNOWN_LNG = "last_known_lng"
+        private const val KEY_LAST_KNOWN_ACCURACY = "last_known_accuracy"
+        private const val KEY_LAST_KNOWN_TIME = "last_known_time"
     }
 }

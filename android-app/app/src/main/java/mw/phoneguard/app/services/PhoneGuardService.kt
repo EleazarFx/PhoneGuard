@@ -140,7 +140,7 @@ class PhoneGuardService : Service() {
         currentTrackingMode = try { TrackingMode.valueOf(storedModeName) } catch (_: Exception) { TrackingMode.NORMAL }
 
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        startForegroundWithTypes()
         registerSimReceiver()
         registerScreenStateReceiver()
         registerAirplaneModeReceiver()
@@ -169,7 +169,7 @@ class PhoneGuardService : Service() {
         Log.i(TAG, "onStartCommand (action=${intent?.action})")
         ServiceLogger.log(TAG, "onStartCommand (action=${intent?.action})")
 
-        startForeground(NOTIFICATION_ID, buildNotification())
+        startForegroundWithTypes()
         handleSimState()
         updateCommandPollSchedule()
 
@@ -238,6 +238,20 @@ class PhoneGuardService : Service() {
         }
 
         return START_STICKY
+    }
+
+    private fun startForegroundWithTypes() {
+        val notification = buildNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            var types = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                types = types or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            }
+            startForeground(NOTIFICATION_ID, notification, types)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun updateTrackingMode(newMode: TrackingMode) {
@@ -525,7 +539,7 @@ class PhoneGuardService : Service() {
         val deviceName = "${Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} ${Build.MODEL}"
         val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
         val simInfo = if (operator.isNotBlank()) "$operator ($operatorCode)" else "Unknown SIM"
-        val location = AdaptiveLocationManager.fallbackLocationManager(applicationContext)
+        val location = AdaptiveLocationManager.fetchLocationBlocking(applicationContext) ?: AdaptiveLocationManager.fallbackLocationManager(applicationContext)
         val mapsLink = AdaptiveLocationManager.formatMapsUrl(location)
 
         val alertMessage = "[PhoneGuard] ALERT: Unauthorized SIM inserted! Device: $deviceName. SIM: $simInfo. Time: $timeStr. Location: $mapsLink"
@@ -637,7 +651,7 @@ class PhoneGuardService : Service() {
 
                     if (deviceId != null && (tokenStore.isPeriodicLocationEnabled() || mode != TrackingMode.NORMAL)) {
                         val location = AdaptiveLocationManager.fetchLocation(applicationContext, mode)
-                        val checkResult = AdaptiveLocationManager.evaluateLocationMovement(location, mode)
+                        val checkResult = AdaptiveLocationManager.evaluateLocationMovement(location, mode, applicationContext)
 
                         when (checkResult) {
                             is LocationCheckResult.Dispatch -> {
