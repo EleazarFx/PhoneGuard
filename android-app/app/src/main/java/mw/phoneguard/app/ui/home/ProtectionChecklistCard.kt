@@ -1,8 +1,10 @@
 package mw.phoneguard.app.ui.home
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,10 +23,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -32,6 +36,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,7 +48,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import mw.phoneguard.app.services.ProtectionChecklistState
-import mw.phoneguard.app.ui.theme.AlertRed
 import mw.phoneguard.app.ui.theme.GuardTeal
 import mw.phoneguard.app.ui.theme.LineColor
 import mw.phoneguard.app.ui.theme.PanelDark
@@ -56,69 +63,46 @@ fun ProtectionChecklistCard(
     onEnableDeviceAdmin: () -> Unit,
     onDisableBatteryOptimization: () -> Unit,
     onConfigureAutoStart: () -> Unit,
+    onRequestSmsPermission: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var isExpanded by remember { mutableStateOf(!state.isFullyProtected) }
+
     Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(PanelDark)
+            .border(
+                1.dp,
+                if (!state.isFullyProtected) WarnAmber.copy(alpha = 0.4f) else LineColor,
+                RoundedCornerShape(14.dp)
+            )
     ) {
-        // Warning banner if protection is incomplete
-        AnimatedVisibility(
-            visible = !state.isFullyProtected,
-            enter = fadeIn(),
-            exit = fadeOut()
+        // Collapsible Header Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { isExpanded = !isExpanded }
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(WarnAmber.copy(alpha = 0.12f))
-                    .border(1.dp, WarnAmber.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-                    .padding(16.dp)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
             ) {
-                Row(
-                    verticalAlignment = Alignment.Top
-                ) {
+                if (!state.isFullyProtected) {
                     Icon(
                         imageVector = Icons.Default.Warning,
                         contentDescription = "Warning",
                         tint = WarnAmber,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier
+                            .size(20.dp)
+                            .padding(end = 6.dp)
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Protection is incomplete (${state.completedStepCount}/4 completed)",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = WarnAmber
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "Android Doze & background killers will stop PhoneGuard location tracking unless all 4 setup steps are completed.",
-                            fontSize = 12.sp,
-                            color = TextPrimary.copy(alpha = 0.9f),
-                            lineHeight = 17.sp
-                        )
-                    }
                 }
-            }
-        }
 
-        // Main Checklist Panel
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(PanelDark)
-                .border(1.dp, LineColor, RoundedCornerShape(14.dp))
-                .padding(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
                 Column {
                     Text(
                         text = "BACKGROUND SURVIVAL CHECKLIST",
@@ -129,12 +113,29 @@ fun ProtectionChecklistCard(
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = "Anti-Kill Configuration",
-                        fontSize = 17.sp,
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
+                    Text(
+                        text = if (state.isFullyProtected) {
+                            "All 5 anti-kill protections active"
+                        } else {
+                            "${5 - state.completedStepCount} missing setup step${if (5 - state.completedStepCount > 1) "s" else ""}"
+                        },
+                        fontSize = 11.sp,
+                        color = if (state.isFullyProtected) GuardTeal else WarnAmber,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
+            }
 
+            Spacer(Modifier.width(8.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(20.dp))
@@ -142,57 +143,107 @@ fun ProtectionChecklistCard(
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "${state.completedStepCount}/4 Active",
+                        text = "${state.completedStepCount}/5 Active",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (state.isFullyProtected) GuardTeal else WarnAmber
                     )
                 }
+
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = TextMuted,
+                    modifier = Modifier.size(22.dp)
+                )
             }
+        }
 
-            Spacer(Modifier.height(16.dp))
+        // Expandable Content Block
+        AnimatedVisibility(
+            visible = isExpanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Warning Banner inside expanded view
+                if (!state.isFullyProtected) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(WarnAmber.copy(alpha = 0.12f))
+                            .border(1.dp, WarnAmber.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                            .padding(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.Top) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Warning",
+                                tint = WarnAmber,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = "Protection incomplete (${state.completedStepCount}/5 active). Android Doze & background app killers will stop tracking unless all 5 steps are setup.",
+                                fontSize = 11.sp,
+                                color = TextPrimary.copy(alpha = 0.9f),
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+                }
 
-            // Step 1: Background Location
-            ChecklistItem(
-                title = "1. Allow Location All The Time",
-                subtitle = "Select 'Allow all the time' in settings so tracking works when phone screen is off.",
-                isDone = state.hasBackgroundLocation,
-                icon = Icons.Default.LocationOn,
-                onClick = onRequestBackgroundLocation
-            )
+                // Step 1: Background Location
+                ChecklistItem(
+                    title = "1. Allow Location All The Time",
+                    subtitle = "Select 'Allow all the time' so tracking works when phone screen is locked.",
+                    isDone = state.hasBackgroundLocation,
+                    icon = Icons.Default.LocationOn,
+                    onClick = onRequestBackgroundLocation
+                )
 
-            Spacer(Modifier.height(12.dp))
+                // Step 2: Device Admin
+                ChecklistItem(
+                    title = "2. Setup Device Administrator",
+                    subtitle = "Enables wrong PIN failure detection & remote lock/wipe capabilities.",
+                    isDone = state.hasDeviceAdmin,
+                    icon = Icons.Default.Security,
+                    onClick = onEnableDeviceAdmin
+                )
 
-            // Step 2: Device Admin
-            ChecklistItem(
-                title = "2. Setup Device Administrator",
-                subtitle = "Enables wrong PIN failure detection & remote lock/wipe capabilities.",
-                isDone = state.hasDeviceAdmin,
-                icon = Icons.Default.Security,
-                onClick = onEnableDeviceAdmin
-            )
+                // Step 3: Battery Optimization
+                ChecklistItem(
+                    title = "3. Disable Battery Optimization",
+                    subtitle = "Prevents Android Doze Mode from killing 15-min and emergency location pings.",
+                    isDone = state.isBatteryOptimizationDisabled,
+                    icon = Icons.Default.BatteryAlert,
+                    onClick = onDisableBatteryOptimization
+                )
 
-            Spacer(Modifier.height(12.dp))
+                // Step 4: Auto-Start
+                ChecklistItem(
+                    title = "4. Allow Auto-Start & Background Run",
+                    subtitle = "Overrides Tecno, Infinix, Xiaomi & Samsung aggressive app killers.",
+                    isDone = state.isAutoStartConfigured,
+                    icon = Icons.Default.PowerSettingsNew,
+                    onClick = onConfigureAutoStart
+                )
 
-            // Step 3: Battery Optimization
-            ChecklistItem(
-                title = "3. Disable Battery Optimization",
-                subtitle = "Prevents Android Doze Mode from killing 15-min and emergency location pings.",
-                isDone = state.isBatteryOptimizationDisabled,
-                icon = Icons.Default.BatteryAlert,
-                onClick = onDisableBatteryOptimization
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            // Step 4: Auto-Start
-            ChecklistItem(
-                title = "4. Allow Auto-Start & Background Run",
-                subtitle = "Overrides Tecno, Infinix, Xiaomi & Samsung aggressive app killers.",
-                isDone = state.isAutoStartConfigured,
-                icon = Icons.Default.PowerSettingsNew,
-                onClick = onConfigureAutoStart
-            )
+                // Step 5: SMS Permission
+                ChecklistItem(
+                    title = "5. Grant SMS & Telephony Access",
+                    subtitle = "Enables emergency SMS alerts to trusted contacts on SIM swap or tamper events.",
+                    isDone = state.hasSmsPermission,
+                    icon = Icons.Default.Sms,
+                    onClick = onRequestSmsPermission
+                )
+            }
         }
     }
 }
@@ -236,7 +287,7 @@ private fun ChecklistItem(
         ) {
             Text(
                 text = title,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (isDone) TextPrimary else TextPrimary.copy(alpha = 0.9f)
             )

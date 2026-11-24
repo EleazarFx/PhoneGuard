@@ -4,8 +4,6 @@ import android.app.Application
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
-import android.telephony.SubscriptionManager
-import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -185,53 +183,24 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>()
-                val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-                if (tm == null) {
-                    onResult(false, "TelephonyManager unavailable")
-                    return@launch
-                }
+                val simDetails = mw.phoneguard.app.services.SimHelper.extractSimDetails(context)
 
-                val operator = tm.simOperatorName ?: ""
-                val country = tm.simCountryIso ?: ""
-                val operatorCode = tm.simOperator ?: ""
-                val subId = getActiveSubscriptionId(context)
-
-                val operators = mutableSetOf<String>()
-                val countries = mutableSetOf<String>()
-                val codes = mutableSetOf<String>()
-                val subscriptions = mutableSetOf<String>()
-
-                if (operator.isNotBlank()) operators.add(operator)
-                if (country.isNotBlank()) countries.add(country)
-                if (operatorCode.isNotBlank()) codes.add(operatorCode)
-                if (subId.isNotBlank()) subscriptions.add(subId)
-
-                try {
-                    val sm = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
-                    if (sm != null) {
-                        @Suppress("MissingPermission")
-                        val activeList = sm.activeSubscriptionInfoList
-                        if (!activeList.isNullOrEmpty()) {
-                            for (sub in activeList) {
-                                if (!sub.carrierName.isNullOrBlank()) operators.add(sub.carrierName.toString())
-                                if (!sub.countryIso.isNullOrBlank()) countries.add(sub.countryIso.toString())
-                                val mccMnc = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                                    "${sub.mccString.orEmpty()}${sub.mncString.orEmpty()}"
-                                } else ""
-                                if (mccMnc.isNotBlank()) codes.add(mccMnc)
-                                val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
-                                subscriptions.add("${sub.subscriptionId}:$carrier")
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-
-                if (codes.isEmpty() && operatorCode.isNotBlank()) codes.add(operatorCode)
-
-                if (codes.isNotEmpty() || operator.isNotBlank()) {
-                    tokenStore.resetOriginalSimIdentity(operators, countries, codes, subscriptions)
-                    tokenStore.saveSimIdentity(operator, country, operatorCode, subId)
-                    val displayOp = if (operator.isNotBlank()) operator else if (operatorCode.isNotBlank()) operatorCode else "Current Operator"
+                if (simDetails.isLoaded()) {
+                    tokenStore.resetOriginalSimIdentity(
+                        simDetails.operators,
+                        simDetails.countries,
+                        simDetails.codes,
+                        simDetails.subscriptions
+                    )
+                    tokenStore.saveSimIdentity(
+                        simDetails.operatorName,
+                        simDetails.countryIso,
+                        simDetails.operatorCode,
+                        simDetails.subscriptionId
+                    )
+                    val displayOp = if (simDetails.operatorName.isNotBlank()) simDetails.operatorName
+                    else if (simDetails.operatorCode.isNotBlank()) simDetails.operatorCode
+                    else "Current Operator"
                     val successMsg = "Original SIM updated to $displayOp"
                     ServiceLogger.log("Settings", successMsg)
                     onResult(true, successMsg)
@@ -243,23 +212,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 onResult(false, "Error: ${e.message}")
             }
         }
-    }
-
-    private fun getActiveSubscriptionId(context: Application): String {
-        try {
-            val sm = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
-            if (sm != null) {
-                @Suppress("MissingPermission")
-                val activeList = sm.activeSubscriptionInfoList
-                if (!activeList.isNullOrEmpty()) {
-                    return activeList.joinToString(",") { sub ->
-                        val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
-                        "${sub.subscriptionId}:$carrier"
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return ""
     }
 
     fun forceSimCheck(context: Context, onResult: (String) -> Unit) {

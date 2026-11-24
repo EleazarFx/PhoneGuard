@@ -26,7 +26,8 @@ data class HomeUiState(
         hasBackgroundLocation = false,
         hasDeviceAdmin = false,
         isBatteryOptimizationDisabled = false,
-        isAutoStartConfigured = false
+        isAutoStartConfigured = false,
+        hasSmsPermission = false
     ),
     val currentTrackingMode: TrackingMode = TrackingMode.NORMAL
 )
@@ -149,51 +150,28 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>()
-                val tm = context.getSystemService(android.content.Context.TELEPHONY_SERVICE) as? android.telephony.TelephonyManager
-                if (tm == null) {
-                    onResult(false, "TelephonyManager unavailable")
-                    return@launch
+                val simDetails = mw.phoneguard.app.services.SimHelper.extractSimDetails(context)
+
+                if (simDetails.isLoaded()) {
+                    tokenStore.resetOriginalSimIdentity(
+                        simDetails.operators,
+                        simDetails.countries,
+                        simDetails.codes,
+                        simDetails.subscriptions
+                    )
+                    tokenStore.saveSimIdentity(
+                        simDetails.operatorName,
+                        simDetails.countryIso,
+                        simDetails.operatorCode,
+                        simDetails.subscriptionId
+                    )
+                    onResult(true, "Trusted SIM identity successfully reset to active SIM.")
+                } else {
+                    onResult(false, "No active SIM detected to set as baseline")
                 }
-
-                val operator = tm.simOperatorName ?: ""
-                val country = tm.simCountryIso ?: ""
-                val operatorCode = tm.simOperator ?: ""
-                val subId = getActiveSubscriptionId(context)
-
-                val operators = mutableSetOf<String>()
-                val countries = mutableSetOf<String>()
-                val codes = mutableSetOf<String>()
-                val subscriptions = mutableSetOf<String>()
-
-                if (operator.isNotBlank()) operators.add(operator)
-                if (country.isNotBlank()) countries.add(country)
-                if (operatorCode.isNotBlank()) codes.add(operatorCode)
-                if (subId.isNotBlank()) subscriptions.add(subId)
-
-                tokenStore.resetOriginalSimIdentity(operators, countries, codes, subscriptions)
-                onResult(true, "Trusted SIM identity successfully reset to active SIM.")
             } catch (e: Exception) {
                 onResult(false, "Failed to reset SIM identity: ${e.message}")
             }
         }
-    }
-
-    private fun getActiveSubscriptionId(context: android.content.Context): String {
-        try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-                val sm = context.getSystemService(android.content.Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager
-                if (sm != null) {
-                    @Suppress("MissingPermission")
-                    val activeList = sm.activeSubscriptionInfoList
-                    if (!activeList.isNullOrEmpty()) {
-                        return activeList.joinToString(",") { sub ->
-                            val carrier = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) sub.carrierId else sub.simSlotIndex
-                            "${sub.subscriptionId}:$carrier"
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return ""
     }
 }

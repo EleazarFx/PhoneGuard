@@ -100,6 +100,31 @@ class MainActivity : ComponentActivity() {
             )
         )
 
+        val smsLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            val sendGranted = permissions[Manifest.permission.SEND_SMS] ?: false
+            val receiveGranted = permissions[Manifest.permission.RECEIVE_SMS] ?: false
+            val phoneStateGranted = permissions[Manifest.permission.READ_PHONE_STATE] ?: false
+            if (!sendGranted || !receiveGranted || !phoneStateGranted) {
+                android.util.Log.w("PhoneGuard", "SMS or PhoneState permissions denied")
+            }
+        }
+
+        fun getSmsPermissions(): Array<String> {
+            val list = mutableListOf(
+                Manifest.permission.SEND_SMS,
+                Manifest.permission.RECEIVE_SMS,
+                Manifest.permission.READ_PHONE_STATE
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                list.add(Manifest.permission.READ_PHONE_NUMBERS)
+            }
+            return list.toTypedArray()
+        }
+
+        smsLauncher.launch(getSmsPermissions())
+
         setContent {
             PhoneGuardTheme {
                 PhoneGuardApp(
@@ -111,6 +136,9 @@ class MainActivity : ComponentActivity() {
                         } else {
                             homeViewModel.refreshAdminState()
                         }
+                    },
+                    onRequestSmsPermission = {
+                        smsLauncher.launch(getSmsPermissions())
                     }
                 )
             }
@@ -127,7 +155,8 @@ class MainActivity : ComponentActivity() {
 fun PhoneGuardApp(
     authViewModel: AuthViewModel,
     homeViewModel: HomeViewModel,
-    onRequestBackgroundLocation: () -> Unit
+    onRequestBackgroundLocation: () -> Unit,
+    onRequestSmsPermission: () -> Unit
 ) {
     val state by authViewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -179,6 +208,12 @@ fun PhoneGuardApp(
                                 Toast.makeText(context, "Grant Auto-Start permission for ${OemAutoStartHelper.getManufacturerName()}", Toast.LENGTH_LONG).show()
                             }
                             homeViewModel.refreshAdminState()
+                        },
+                        onRequestSmsPermission = {
+                            onRequestSmsPermission()
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                homeViewModel.refreshAdminState()
+                            }, 1500)
                         },
                         onResetOriginalSim = {
                             homeViewModel.resetOriginalSim { _, msg ->

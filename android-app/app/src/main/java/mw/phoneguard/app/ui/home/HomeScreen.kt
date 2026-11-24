@@ -71,6 +71,7 @@ fun HomeScreen(
     onRequestBackgroundLocation: () -> Unit,
     onDisableBatteryOptimization: () -> Unit,
     onConfigureAutoStart: () -> Unit,
+    onRequestSmsPermission: () -> Unit = {},
     onResetOriginalSim: () -> Unit,
     onTestDecoyShutdown: () -> Unit,
     onLogout: () -> Unit,
@@ -261,7 +262,8 @@ fun HomeScreen(
                     onRequestBackgroundLocation = onRequestBackgroundLocation,
                     onEnableDeviceAdmin = onEnableAdminClick,
                     onDisableBatteryOptimization = onDisableBatteryOptimization,
-                    onConfigureAutoStart = onConfigureAutoStart
+                    onConfigureAutoStart = onConfigureAutoStart,
+                    onRequestSmsPermission = onRequestSmsPermission
                 )
 
                 Spacer(Modifier.height(20.dp))

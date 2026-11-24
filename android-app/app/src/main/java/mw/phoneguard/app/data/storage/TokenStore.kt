@@ -102,7 +102,10 @@ class TokenStore private constructor(context: Context) {
     fun getOriginalSimCodes(): Set<String>? = prefs.getStringSet(KEY_ORIGINAL_SIM_CODES, null)
     fun getOriginalSimSubscriptions(): Set<String>? = prefs.getStringSet(KEY_ORIGINAL_SIM_SUBSCRIPTIONS, null)
 
-    fun hasOriginalSimIdentity(): Boolean = !getOriginalSimCodes().isNullOrEmpty()
+    fun hasOriginalSimIdentity(): Boolean =
+        !getOriginalSimCodes().isNullOrEmpty() ||
+        !getOriginalSimSubscriptions().isNullOrEmpty() ||
+        !getOriginalSimOperators().isNullOrEmpty()
 
     fun resetOriginalSimIdentity(
         operators: Set<String>,

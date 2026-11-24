@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.IBinder
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -23,6 +24,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import mw.phoneguard.app.MainActivity
 import mw.phoneguard.app.data.local.EventEntity
 import mw.phoneguard.app.data.local.PhoneGuardDatabase
@@ -38,8 +40,12 @@ class PhoneGuardService : Service() {
     private var alertModeManager: AlertModeManager? = null
     private var snatchGuard: SnatchGuard? = null
     private var simReceiver: BroadcastReceiver? = null
+    private var subscriptionListener: SubscriptionManager.OnSubscriptionsChangedListener? = null
     private var screenStateReceiver: ScreenStateReceiver? = null
     private var airplaneReceiver: BroadcastReceiver? = null
+
+    private val isSimChecking = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var lastSimAlertTimestamp = 0L
 
     var currentTrackingMode: TrackingMode = TrackingMode.NORMAL
         private set
@@ -144,7 +150,7 @@ class PhoneGuardService : Service() {
         registerSimReceiver()
         registerScreenStateReceiver()
         registerAirplaneModeReceiver()
-        handleSimState()
+        handleSimStateAsync()
         startAdaptiveLocationTicker()
 
         val tokenStore = TokenStore.get(applicationContext)
@@ -170,7 +176,7 @@ class PhoneGuardService : Service() {
         ServiceLogger.log(TAG, "onStartCommand (action=${intent?.action})")
 
         startForegroundWithTypes()
-        handleSimState()
+        handleSimStateAsync()
         updateCommandPollSchedule()
 
         when (intent?.action) {
@@ -205,7 +211,7 @@ class PhoneGuardService : Service() {
 
             ACTION_STOP_ALERT_MODE -> stopAlertMode()
 
-            ACTION_FORCE_SIM_CHECK -> handleSimState()
+            ACTION_FORCE_SIM_CHECK -> handleSimStateAsync()
 
             ACTION_FORCE_WRONG_PIN -> {
                 Log.w(TAG, "Force wrong-PIN trigger executed")
@@ -384,7 +390,7 @@ class PhoneGuardService : Service() {
     }
 
     // ─────────────────────────────────────────────────────────
-    // SIM Change Receiver
+    // SIM Change Receiver & Handler
     // ─────────────────────────────────────────────────────────
 
     private fun registerSimReceiver() {
@@ -392,17 +398,19 @@ class PhoneGuardService : Service() {
 
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                val action = intent?.action ?: return
-                if (action == "android.intent.action.SIM_STATE_CHANGED") {
-                    val state = intent.getStringExtra("ss")
-                    if (state == "LOADED" || state == "READY") {
-                        handleSimState()
-                    }
-                }
+                Log.d(TAG, "SIM Broadcast received: action=${intent?.action}")
+                handleSimStateAsync()
             }
         }
 
-        val filter = IntentFilter("android.intent.action.SIM_STATE_CHANGED")
+        val filter = IntentFilter().apply {
+            addAction("android.intent.action.SIM_STATE_CHANGED")
+            addAction("android.telephony.action.SIM_CARD_STATE_CHANGED")
+            addAction("android.telephony.action.SIM_APPLICATION_STATE_CHANGED")
+            addAction("android.telephony.action.DEFAULT_SUBSCRIPTION_CHANGED")
+            addAction("android.telephony.action.DEFAULT_DATA_SUBSCRIPTION_CHANGED")
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
@@ -410,12 +418,39 @@ class PhoneGuardService : Service() {
             registerReceiver(receiver, filter)
         }
         simReceiver = receiver
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val sm = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+                if (sm != null) {
+                    val listener = object : SubscriptionManager.OnSubscriptionsChangedListener() {
+                        override fun onSubscriptionsChanged() {
+                            Log.d(TAG, "SubscriptionManager.onSubscriptionsChanged triggered")
+                            handleSimStateAsync()
+                        }
+                    }
+                    sm.addOnSubscriptionsChangedListener(listener)
+                    subscriptionListener = listener
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not register OnSubscriptionsChangedListener: ${e.message}")
+        }
     }
 
     private fun unregisterSimReceiver() {
         simReceiver?.let {
             try { unregisterReceiver(it) } catch (_: Exception) {}
             simReceiver = null
+        }
+        subscriptionListener?.let { listener ->
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    val sm = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+                    sm?.removeOnSubscriptionsChangedListener(listener)
+                }
+            } catch (_: Exception) {}
+            subscriptionListener = null
         }
     }
 
@@ -486,51 +521,120 @@ class PhoneGuardService : Service() {
         }
     }
 
-    private fun handleSimState() {
+    private fun handleSimStateAsync() {
+        if (!isSimChecking.compareAndSet(false, true)) {
+            Log.d(TAG, "SIM check already in progress — suppressing duplicate check request")
+            return
+        }
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                for (attempt in 1..8) {
+                    val simDetails = SimHelper.extractSimDetails(applicationContext)
+                    if (simDetails.isLoaded()) {
+                        handleSimStateWithDetails(simDetails)
+                        return@launch
+                    }
+                    if (attempt < 8) {
+                        Log.d(TAG, "SIM card details not loaded yet (attempt $attempt/8). Retrying in 4s...")
+                        delay(4000L)
+                    }
+                }
+                Log.w(TAG, "SIM card details unavailable after 8 boot attempts")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in handleSimState: ${e.message}", e)
+            } finally {
+                isSimChecking.set(false)
+            }
+        }
+    }
+
+    private suspend fun handleSimStateWithDetails(simDetails: SimDetails) {
         val tokenStore = TokenStore.get(applicationContext)
         val deviceId = tokenStore.getDeviceId() ?: return
 
-        val tm = getSystemService(TELEPHONY_SERVICE) as? TelephonyManager ?: return
-        val operator = tm.simOperatorName ?: ""
-        val country = tm.simCountryIso ?: ""
-        val operatorCode = tm.simOperator ?: ""
-        val subscriptionId = getActiveSubscriptionId()
-
-        val currentCodes = mutableSetOf<String>()
-        if (operatorCode.isNotBlank()) currentCodes.add(operatorCode)
-
-        val currentOperators = mutableSetOf<String>()
-        if (operator.isNotBlank()) currentOperators.add(operator)
-
-        val currentCountries = mutableSetOf<String>()
-        if (country.isNotBlank()) currentCountries.add(country)
-
-        val currentSubscriptions = mutableSetOf<String>()
-        if (subscriptionId.isNotBlank()) currentSubscriptions.add(subscriptionId)
-
         if (!tokenStore.hasOriginalSimIdentity()) {
-            if (currentCodes.isNotEmpty()) {
-                tokenStore.saveOriginalSimIdentity(currentOperators, currentCountries, currentCodes, currentSubscriptions)
-                tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
-            }
+            tokenStore.saveOriginalSimIdentity(
+                simDetails.operators,
+                simDetails.countries,
+                simDetails.codes,
+                simDetails.subscriptions
+            )
+            tokenStore.saveSimIdentity(
+                simDetails.operatorName,
+                simDetails.countryIso,
+                simDetails.operatorCode,
+                simDetails.subscriptionId
+            )
+            Log.i(TAG, "Original SIM identity baseline established: codes=${simDetails.codes}, subs=${simDetails.subscriptions}")
             return
         }
 
         val originalCodes = tokenStore.getOriginalSimCodes() ?: emptySet()
-        val matchesOriginal = currentCodes.isNotEmpty() && originalCodes.isNotEmpty() &&
-                (currentCodes == originalCodes || currentCodes.intersect(originalCodes).isNotEmpty())
+        val originalOperators = tokenStore.getOriginalSimOperators() ?: emptySet()
+        val originalSubscriptions = tokenStore.getOriginalSimSubscriptions() ?: emptySet()
+
+        val originalSubEntries = originalSubscriptions.filter { 
+            it.startsWith("subId:") || it.startsWith("cardId:") || it.startsWith("cardStr:") || it.startsWith("iccid:") 
+        }.toSet()
+
+        var hasUnauthorizedSim = false
+        if (simDetails.simList.isNotEmpty() && originalSubEntries.isNotEmpty()) {
+            for (sim in simDetails.simList) {
+                val simSubEntries = sim.entries.filter { 
+                    it.startsWith("subId:") || it.startsWith("cardId:") || it.startsWith("cardStr:") || it.startsWith("iccid:") 
+                }.toSet()
+
+                val isSimTrusted = simSubEntries.isNotEmpty() && simSubEntries.intersect(originalSubEntries).isNotEmpty()
+                if (!isSimTrusted) {
+                    Log.w(TAG, "Active SIM in slot ${sim.slotIndex} (subId=${sim.subId}, carrier=${sim.carrierName}) is NOT in trusted baseline: $simSubEntries")
+                    hasUnauthorizedSim = true
+                    break
+                }
+            }
+        }
+
+        val matchesCode = simDetails.codes.isNotEmpty() && originalCodes.isNotEmpty() &&
+                simDetails.codes.intersect(originalCodes).isNotEmpty()
+        val matchesOperator = simDetails.operators.isNotEmpty() && originalOperators.isNotEmpty() &&
+                simDetails.operators.intersect(originalOperators).isNotEmpty()
+
+        val matchesOriginal = if (originalSubEntries.isNotEmpty() && simDetails.simList.isNotEmpty()) {
+            !hasUnauthorizedSim
+        } else if (originalSubEntries.isNotEmpty()) {
+            false
+        } else {
+            matchesCode || matchesOperator
+        }
+
+        Log.d(TAG, "SIM Check: simCount=${simDetails.simList.size}, hasUnauthorizedSim=$hasUnauthorizedSim, matchesOriginal=$matchesOriginal, originalSubEntries=$originalSubEntries")
 
         if (matchesOriginal) {
             val lastAlerted = tokenStore.getLastAlertedSimCodes()
             if (lastAlerted != null) {
                 tokenStore.clearLastAlertedSimCodes()
             }
-            tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
+            tokenStore.saveSimIdentity(
+                simDetails.operatorName,
+                simDetails.countryIso,
+                simDetails.operatorCode,
+                simDetails.subscriptionId
+            )
+            Log.d(TAG, "SIM matches trusted original identity: ${simDetails.codes}")
             return
         }
 
+        val currentSignature = simDetails.codes + simDetails.subscriptions
         val lastAlerted = tokenStore.getLastAlertedSimCodes()
-        if (lastAlerted == currentCodes) return
+        val now = System.currentTimeMillis()
+
+        if ((lastAlerted != null && lastAlerted == currentSignature) || (now - lastSimAlertTimestamp < 60_000L)) {
+            Log.d(TAG, "Foreign SIM change already alerted for signature $currentSignature (cooldown active)")
+            return
+        }
+
+        // Reserve signature & timestamp IMMEDIATELY before starting location fetch or SMS dispatch to prevent race conditions
+        lastSimAlertTimestamp = now
+        tokenStore.saveLastAlertedSimCodes(currentSignature)
 
         Log.w(TAG, "!!! FOREIGN SIM CHANGE DETECTED !!! Escalating to SUSPICIOUS mode.")
         queueEvent(deviceId, "sim_change")
@@ -538,16 +642,41 @@ class PhoneGuardService : Service() {
 
         val deviceName = "${Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} ${Build.MODEL}"
         val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-        val simInfo = if (operator.isNotBlank()) "$operator ($operatorCode)" else "Unknown SIM"
-        val location = AdaptiveLocationManager.fetchLocationBlocking(applicationContext) ?: AdaptiveLocationManager.fallbackLocationManager(applicationContext)
+        val opInfo = if (simDetails.operatorName.isNotBlank()) "${simDetails.operatorName} (${simDetails.operatorCode})"
+                     else if (simDetails.operatorCode.isNotBlank()) simDetails.operatorCode
+                     else "Foreign SIM"
+
+        val location = withTimeoutOrNull(8000L) {
+            AdaptiveLocationManager.fetchLocation(applicationContext)
+        } ?: AdaptiveLocationManager.fallbackLocationManager(applicationContext)
+
         val mapsLink = AdaptiveLocationManager.formatMapsUrl(location)
 
-        val alertMessage = "[PhoneGuard] ALERT: Unauthorized SIM inserted! Device: $deviceName. SIM: $simInfo. Time: $timeStr. Location: $mapsLink"
-        SmsSender.sendAlertToTrustedContacts(applicationContext, alertMessage, bypassRateLimit = true)
-        triggerDecoy(applicationContext)
+        val alertMessage = "[PhoneGuard] ALERT: Unauthorized SIM inserted! Device: $deviceName. SIM: $opInfo. Time: $timeStr. Location: $mapsLink"
 
-        tokenStore.saveLastAlertedSimCodes(currentCodes)
-        tokenStore.saveSimIdentity(operator, country, operatorCode, subscriptionId)
+        var smsSent = false
+        for (attempt in 1..3) {
+            smsSent = SmsSender.sendAlertToTrustedContacts(applicationContext, alertMessage, bypassRateLimit = true)
+            if (smsSent) break
+            Log.w(TAG, "SMS dispatch attempt $attempt failed (cellular network registering?). Retrying in 4s...")
+            delay(4000L)
+        }
+
+        if (smsSent) {
+            tokenStore.saveSimIdentity(
+                simDetails.operatorName,
+                simDetails.countryIso,
+                simDetails.operatorCode,
+                simDetails.subscriptionId
+            )
+            Log.i(TAG, "Unauthorized SIM change SMS alert dispatched successfully")
+        } else {
+            Log.e(TAG, "Failed to dispatch SIM change alert SMS after 3 attempts — clearing alert signature for retry")
+            tokenStore.clearLastAlertedSimCodes()
+            lastSimAlertTimestamp = 0L
+        }
+
+        triggerDecoy(applicationContext)
     }
 
     private fun getActiveSubscriptionId(): String {

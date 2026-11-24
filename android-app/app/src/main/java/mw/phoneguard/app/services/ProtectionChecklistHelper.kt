@@ -17,16 +17,20 @@ data class ProtectionChecklistState(
     val hasBackgroundLocation: Boolean,
     val hasDeviceAdmin: Boolean,
     val isBatteryOptimizationDisabled: Boolean,
-    val isAutoStartConfigured: Boolean
+    val isAutoStartConfigured: Boolean,
+    val hasSmsPermission: Boolean = false
 ) {
+    val totalStepCount: Int = 5
+
     val isFullyProtected: Boolean
-        get() = hasBackgroundLocation && hasDeviceAdmin && isBatteryOptimizationDisabled && isAutoStartConfigured
+        get() = hasBackgroundLocation && hasDeviceAdmin && isBatteryOptimizationDisabled && isAutoStartConfigured && hasSmsPermission
 
     val completedStepCount: Int
         get() = (if (hasBackgroundLocation) 1 else 0) +
                 (if (hasDeviceAdmin) 1 else 0) +
                 (if (isBatteryOptimizationDisabled) 1 else 0) +
-                (if (isAutoStartConfigured) 1 else 0)
+                (if (isAutoStartConfigured) 1 else 0) +
+                (if (hasSmsPermission) 1 else 0)
 }
 
 object ProtectionChecklistHelper {
@@ -36,13 +40,22 @@ object ProtectionChecklistHelper {
         val hasAdmin = isDeviceAdminActive(context)
         val isBatteryDisabled = isIgnoringBatteryOptimizations(context)
         val isAutoStartDone = isAutoStartConfigured(context)
+        val hasSms = isSmsPermissionGranted(context)
 
         return ProtectionChecklistState(
             hasBackgroundLocation = hasBgLoc,
             hasDeviceAdmin = hasAdmin,
             isBatteryOptimizationDisabled = isBatteryDisabled,
-            isAutoStartConfigured = isAutoStartDone
+            isAutoStartConfigured = isAutoStartDone,
+            hasSmsPermission = hasSms
         )
+    }
+
+    fun isSmsPermissionGranted(context: Context): Boolean {
+        val send = ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+        val receive = ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
+        val phoneState = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+        return send && receive && phoneState
     }
 
     fun isBackgroundLocationGranted(context: Context): Boolean {
