@@ -66,6 +66,7 @@ class DeviceApi(private val context: android.content.Context? = null) {
                         battery = event.battery,
                         captureStatus = event.captureStatus,
                         photoSha256 = event.photoSha256,
+                        videoSha256 = event.videoSha256,
                         clientSeq = event.clientSeq
                     )
                 )

@@ -20,6 +20,14 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -58,6 +66,7 @@ class EvidenceCapturer(private val context: Context) {
         // 3. Capture Photo Evidence & ML Kit Face Detection / Cropping using CameraX
         var captureStatus = if (capturePhoto) "pending_capture" else "n/a"
         var photoSha256: String? = null
+        var videoSha256: String? = null
 
         if (capturePhoto) {
             try {
@@ -90,7 +99,18 @@ class EvidenceCapturer(private val context: Context) {
             // 4. Optional Video Evidence
             if (tokenStore.isVideoEvidenceEnabled()) {
                 try {
-                    captureVideoEvidence(appContext)
+                    val capturesDir = File(appContext.filesDir, "captures")
+                    if (!capturesDir.exists()) {
+                        capturesDir.mkdirs()
+                    }
+                    val videoFile = File(capturesDir, "${event.id}.mp4")
+                    val videoSuccess = captureVideoWithCameraX(appContext, videoFile)
+                    if (videoSuccess && videoFile.exists() && videoFile.length() > 0) {
+                        videoSha256 = computeSha256(videoFile)
+                        Log.i(TAG, "Video evidence captured successfully for event ${event.id}: ${videoFile.absolutePath}")
+                    } else {
+                        Log.w(TAG, "Video capture failed or resulted in empty file")
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to capture video evidence: ${e.message}", e)
                 }
@@ -103,7 +123,8 @@ class EvidenceCapturer(private val context: Context) {
             accuracy = accuracy,
             battery = battery,
             captureStatus = captureStatus,
-            photoSha256 = photoSha256
+            photoSha256 = photoSha256,
+            videoSha256 = videoSha256
         )
     }
 
@@ -393,7 +414,93 @@ class EvidenceCapturer(private val context: Context) {
         }
     }
 
-    private fun captureVideoEvidence(context: Context) {
-        Log.i(TAG, "Video evidence capture trigger active (opt-in enabled)")
+    @SuppressLint("MissingPermission")
+    private suspend fun captureVideoWithCameraX(context: Context, outputFile: File): Boolean = withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine { continuation ->
+            val resumed = AtomicBoolean(false)
+            try {
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+                cameraProviderFuture.addListener({
+                    try {
+                        val cameraProvider = cameraProviderFuture.get()
+                        val lifecycleOwner = ServiceLifecycleOwner()
+
+                        val frontSelector = CameraSelector.Builder()
+                            .requireLensFacing(CameraSelector.LENS_FACING_FRONT)
+                            .build()
+                        val hasFront = cameraProvider.hasCamera(frontSelector)
+                        val cameraSelector = if (hasFront) frontSelector else CameraSelector.DEFAULT_BACK_CAMERA
+
+                        val qualitySelector = QualitySelector.from(
+                            Quality.SD,
+                            FallbackStrategy.higherQualityOrLowerThan(Quality.SD)
+                        )
+                        val recorder = Recorder.Builder()
+                            .setQualitySelector(qualitySelector)
+                            .build()
+                        val videoCapture = VideoCapture.withOutput(recorder)
+
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, videoCapture)
+
+                        val outputOptions = FileOutputOptions.Builder(outputFile).build()
+                        val recordPending = recorder.prepareRecording(context, outputOptions)
+
+                        val hasAudioPermission = ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        var activeRecording: Recording? = null
+                        val eventListener: (VideoRecordEvent) -> Unit = { recordEvent ->
+                            when (recordEvent) {
+                                is VideoRecordEvent.Finalize -> {
+                                    try {
+                                        cameraProvider.unbindAll()
+                                        lifecycleOwner.destroy()
+                                    } catch (_: Exception) {}
+                                    val success = !recordEvent.hasError()
+                                    if (resumed.compareAndSet(false, true)) {
+                                        continuation.resume(success)
+                                    }
+                                }
+                            }
+                        }
+
+                        activeRecording = if (hasAudioPermission) {
+                            recordPending.withAudioEnabled().start(ContextCompat.getMainExecutor(context), eventListener)
+                        } else {
+                            recordPending.start(ContextCompat.getMainExecutor(context), eventListener)
+                        }
+
+                        // Record video clip for 3 seconds then stop
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            try {
+                                activeRecording?.stop()
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error stopping video recording: ${e.message}", e)
+                                try {
+                                    cameraProvider.unbindAll()
+                                    lifecycleOwner.destroy()
+                                } catch (_: Exception) {}
+                                if (resumed.compareAndSet(false, true)) {
+                                    continuation.resume(outputFile.exists() && outputFile.length() > 0)
+                                }
+                            }
+                        }, 3000L)
+
+                    } catch (e: Exception) {
+                        Log.e(TAG, "CameraX video capture initialization error: ${e.message}", e)
+                        if (resumed.compareAndSet(false, true)) {
+                            continuation.resume(false)
+                        }
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            } catch (e: Exception) {
+                Log.e(TAG, "CameraX video outer error: ${e.message}", e)
+                if (resumed.compareAndSet(false, true)) {
+                    continuation.resume(false)
+                }
+            }
+        }
     }
 }

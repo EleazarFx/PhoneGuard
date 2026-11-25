@@ -36,8 +36,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
@@ -61,13 +63,16 @@ fun ActivityScreen(
     val selectedFilter by viewModel.selectedFilter.collectAsState()
     val selectedEvent by viewModel.selectedEvent.collectAsState()
     val enlargedPhotoFile by viewModel.enlargedPhotoFile.collectAsState()
+    val activeVideoFile by viewModel.activeVideoFile.collectAsState()
 
     var isRefreshing by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    // Back handler for detail overlay & enlarged photo modal
-    BackHandler(enabled = selectedEvent != null || enlargedPhotoFile != null) {
-        if (enlargedPhotoFile != null) {
+    // Back handler for detail overlay, video player & enlarged photo modal
+    BackHandler(enabled = selectedEvent != null || enlargedPhotoFile != null || activeVideoFile != null) {
+        if (activeVideoFile != null) {
+            viewModel.closeVideo()
+        } else if (enlargedPhotoFile != null) {
             viewModel.closeEnlargedPhoto()
         } else if (selectedEvent != null) {
             viewModel.selectEvent(null)
@@ -171,7 +176,8 @@ fun ActivityScreen(
                             onClose = { viewModel.selectEvent(null) },
                             onTogglePreserve = { viewModel.togglePreserve(event) },
                             onDismissEvent = { viewModel.dismissEvent(event.id) },
-                            onPhotoClick = { photoFile -> viewModel.openEnlargedPhoto(photoFile) }
+                            onPhotoClick = { photoFile -> viewModel.openEnlargedPhoto(photoFile) },
+                            onVideoClick = { videoFile -> viewModel.openVideo(videoFile) }
                         )
                     }
                 }
@@ -197,6 +203,14 @@ fun ActivityScreen(
             EnlargedPhotoDialog(
                 photoFile = file,
                 onDismiss = { viewModel.closeEnlargedPhoto() }
+            )
+        }
+
+        // Video Evidence Player Dialog
+        activeVideoFile?.let { file ->
+            VideoPlayerDialog(
+                videoFile = file,
+                onDismiss = { viewModel.closeVideo() }
             )
         }
     }
@@ -329,6 +343,9 @@ private fun EventCard(
     val photoFile = remember(event.id) {
         File(context.filesDir, "captures/${event.id}.jpg").takeIf { it.exists() }
     }
+    val videoFile = remember(event.id) {
+        File(context.filesDir, "captures/${event.id}.mp4").takeIf { it.exists() }
+    }
 
     Card(
         modifier = Modifier
@@ -418,6 +435,14 @@ private fun EventCard(
                         )
                     }
 
+                    // Video Badge
+                    if (videoFile != null || event.videoSha256 != null) {
+                        BadgeChip(
+                            label = "VIDEO",
+                            color = GuardTeal
+                        )
+                    }
+
                     Spacer(Modifier.weight(1f))
 
                     // Sync Status Badge
@@ -466,7 +491,8 @@ private fun EventDetailScreen(
     onClose: () -> Unit,
     onTogglePreserve: () -> Unit,
     onDismissEvent: () -> Unit,
-    onPhotoClick: (File) -> Unit
+    onPhotoClick: (File) -> Unit,
+    onVideoClick: (File) -> Unit
 ) {
     val context = LocalContext.current
     val fullDateFormat = SimpleDateFormat("EEEE, MMMM d, yyyy · HH:mm:ss", Locale.getDefault())
@@ -631,6 +657,68 @@ private fun EventDetailScreen(
                                     color = Color.White
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            // Video Evidence Card (if captured)
+            val videoFile = remember(event.id) {
+                File(context.filesDir, "captures/${event.id}.mp4").takeIf { it.exists() }
+            }
+            if (videoFile != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(PanelDark)
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Videocam,
+                            contentDescription = null,
+                            tint = GuardTeal,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            "Video Evidence",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(160.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(PanelLight)
+                            .clickable { onVideoClick(videoFile) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayCircle,
+                                contentDescription = "Play Video",
+                                tint = GuardTeal,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Tap to play recorded video evidence",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
                         }
                     }
                 }
@@ -857,6 +945,62 @@ private fun EnlargedPhotoDialog(
                     .fillMaxHeight(0.85f)
                     .clip(RoundedCornerShape(12.dp)),
                 contentScale = ContentScale.Fit
+            )
+
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .size(40.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Close",
+                    tint = Color.White
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VideoPlayerDialog(
+    videoFile: File,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.95f)),
+            contentAlignment = Alignment.Center
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    android.widget.VideoView(ctx).apply {
+                        val uri = FileProvider.getUriForFile(
+                            ctx,
+                            "${ctx.packageName}.fileprovider",
+                            videoFile
+                        )
+                        setVideoURI(uri)
+                        val mediaController = android.widget.MediaController(ctx)
+                        mediaController.setAnchorView(this)
+                        setMediaController(mediaController)
+                        setOnPreparedListener { mp ->
+                            mp.isLooping = true
+                            start()
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
             )
 
             IconButton(

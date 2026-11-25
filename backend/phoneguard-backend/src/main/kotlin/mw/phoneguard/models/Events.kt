@@ -12,6 +12,7 @@ data class PostEventRequest(
     val battery: Int? = null,
     val captureStatus: String? = null,
     val photoSha256: String? = null,
+    val videoSha256: String? = null,
     val clientSeq: Long? = null
 )
 
@@ -27,6 +28,7 @@ data class EventSummary(
     val battery: Int?,
     val captureStatus: String?,
     val photoSha256: String?,
+    val videoSha256: String? = null,
     val threatLevel: String?
 )
 

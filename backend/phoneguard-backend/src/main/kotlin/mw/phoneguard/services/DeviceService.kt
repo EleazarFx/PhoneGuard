@@ -140,6 +140,7 @@ class DeviceService {
                 it[battery] = req.battery
                 it[captureStatus] = req.captureStatus
                 it[photoSha256] = req.photoSha256
+                it[videoSha256] = req.videoSha256
                 it[Events.threatLevel] = threatLevel
                 it[createdAt] = now
             }
@@ -175,6 +176,7 @@ class DeviceService {
                 battery = req.battery,
                 captureStatus = req.captureStatus,
                 photoSha256 = req.photoSha256,
+                videoSha256 = req.videoSha256,
                 threatLevel = threatLevel
             )
         }
@@ -274,6 +276,7 @@ class DeviceService {
                         battery = row[Events.battery],
                         captureStatus = row[Events.captureStatus],
                         photoSha256 = row[Events.photoSha256],
+                        videoSha256 = row[Events.videoSha256],
                         threatLevel = row[Events.threatLevel]
                     )
                 }

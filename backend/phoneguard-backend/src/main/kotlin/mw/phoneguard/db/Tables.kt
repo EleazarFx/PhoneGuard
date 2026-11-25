@@ -39,6 +39,7 @@ object Events : UUIDTable("events") {
     val battery = integer("battery").nullable()
     val captureStatus = varchar("capture_status", 30).nullable()
     val photoSha256 = varchar("photo_sha256", 64).nullable()
+    val videoSha256 = varchar("video_sha256", 64).nullable()
     val threatLevel = varchar("threat_level", 20).nullable()
     val createdAt = datetime("created_at")
 }

@@ -43,6 +43,7 @@ class ActivityViewModel(application: Application) : AndroidViewModel(application
     val selectedFilter = MutableStateFlow(EventFilter.ALL)
     val selectedEventId = MutableStateFlow<String?>(null)
     val enlargedPhotoFile = MutableStateFlow<File?>(null)
+    val activeVideoFile = MutableStateFlow<File?>(null)
 
     val allEvents: StateFlow<List<EventEntity>> = db.eventDao()
         .observeAll(tokenStore.getDeviceId() ?: "")
@@ -56,7 +57,7 @@ class ActivityViewModel(application: Application) : AndroidViewModel(application
         when (filter) {
             EventFilter.ALL -> events
             EventFilter.HIGH_THREAT -> events.filter { isHighThreat(it.type) }
-            EventFilter.PHOTOS -> events.filter { hasPhoto(it) }
+            EventFilter.PHOTOS -> events.filter { hasPhoto(it) || hasVideo(it) }
             EventFilter.UNSYNCED -> events.filter { it.syncedAt == null }
         }
     }.stateIn(
@@ -100,6 +101,14 @@ class ActivityViewModel(application: Application) : AndroidViewModel(application
 
     fun closeEnlargedPhoto() {
         enlargedPhotoFile.value = null
+    }
+
+    fun openVideo(file: File?) {
+        activeVideoFile.value = file
+    }
+
+    fun closeVideo() {
+        activeVideoFile.value = null
     }
 
     fun togglePreserve(event: EventEntity) {
@@ -154,6 +163,11 @@ class ActivityViewModel(application: Application) : AndroidViewModel(application
     private fun hasPhoto(event: EventEntity): Boolean {
         val photoFile = File(getApplication<Application>().filesDir, "captures/${event.id}.jpg")
         return photoFile.exists() || event.photoSha256 != null || event.captureStatus in setOf("captured", "no_face", "back_fallback")
+    }
+
+    fun hasVideo(event: EventEntity): Boolean {
+        val videoFile = File(getApplication<Application>().filesDir, "captures/${event.id}.mp4")
+        return videoFile.exists() || event.videoSha256 != null
     }
 
     fun groupEventsByDate(events: List<EventEntity>): List<EventGroup> {
