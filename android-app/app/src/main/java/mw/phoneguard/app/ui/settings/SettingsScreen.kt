@@ -7,7 +7,6 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,7 +44,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -85,7 +83,6 @@ fun SettingsScreen(
     var showDeactivateAdminDialog by remember { mutableStateOf(false) }
     var showImeiDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
-    var showWipeDataDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.refresh()
@@ -177,31 +174,11 @@ fun SettingsScreen(
                     imei1 = state.imei1,
                     imei2 = state.imei2,
                     onDeactivateAdmin = { showDeactivateAdminDialog = true },
-                    onEditImei = { showImeiDialog = true },
-                    onWipeData = { showWipeDataDialog = true }
+                    onEditImei = { showImeiDialog = true }
                 )
 
                 Spacer(Modifier.height(24.dp))
 
-                // 6. DEBUG SECTION (Visible only in Debug builds)
-                if (BuildConfig.DEBUG) {
-                    SettingsSectionHeader("DEBUG & DIAGNOSTICS")
-                    DebugSection(
-                        logs = state.logs,
-                        onRefreshLogs = { viewModel.refreshLogs() },
-                        onForceSimCheck = {
-                            viewModel.forceSimCheck(context) { msg ->
-                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onForceWrongPin = {
-                            viewModel.forceWrongPinTrigger(context) { msg ->
-                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    )
-                    Spacer(Modifier.height(24.dp))
-                }
 
                 // ABOUT & LIMITATIONS
                 SettingsSectionHeader("ABOUT & LIMITATIONS")
@@ -261,27 +238,6 @@ fun SettingsScreen(
             showLogoutDialog = false
             AppSessionManager.lock()
             onLogout()
-        }
-    )
-
-    WipeDataDialog(
-        show = showWipeDataDialog,
-        onDismiss = { showWipeDataDialog = false },
-        onConfirmWipe = { deleteInput, onError ->
-            if (deleteInput != "DELETE") {
-                onError("Must type DELETE")
-            } else {
-                viewModel.wipeAppData { success, msg ->
-                    if (success) {
-                        showWipeDataDialog = false
-                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                        AppSessionManager.lock()
-                        onLogout()
-                    } else {
-                        onError(msg)
-                    }
-                }
-            }
         }
     )
 }
@@ -641,8 +597,7 @@ private fun SecurityAdminSection(
     imei1: String,
     imei2: String,
     onDeactivateAdmin: () -> Unit,
-    onEditImei: () -> Unit,
-    onWipeData: () -> Unit
+    onEditImei: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -744,148 +699,9 @@ private fun SecurityAdminSection(
                 Text(if (hasImei) "Edit IMEIs" else "Set IMEIs", fontSize = 12.sp)
             }
         }
-
-        Spacer(Modifier.height(14.dp))
-        HorizontalDivider(color = LineColor)
-        Spacer(Modifier.height(14.dp))
-
-        // Wipe App Data button
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                Text(
-                    "Wipe App Data",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AlertRed
-                )
-                Text(
-                    "Requires confirmation text",
-                    fontSize = 12.sp,
-                    color = TextMuted
-                )
-            }
-            Button(
-                onClick = onWipeData,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = AlertRed.copy(alpha = 0.15f),
-                    contentColor = AlertRed
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text("Wipe Data", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
-        }
     }
 }
 
-@Composable
-private fun DebugSection(
-    logs: List<String>,
-    onRefreshLogs: () -> Unit,
-    onForceSimCheck: () -> Unit,
-    onForceWrongPin: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(PanelDark)
-            .padding(20.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                "Service Log Output (Last 20)",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = TextPrimary
-            )
-            TextButton(onClick = onRefreshLogs) {
-                Text("Refresh", fontSize = 12.sp, color = GuardTeal)
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(160.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.background)
-                .border(1.dp, LineColor, RoundedCornerShape(12.dp))
-                .padding(10.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
-            if (logs.isEmpty()) {
-                Text(
-                    "No log entries available yet.",
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = TextMuted
-                )
-            } else {
-                logs.forEach { logLine ->
-                    Text(
-                        text = logLine,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = TextPrimary,
-                        lineHeight = 15.sp
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        HorizontalDivider(color = LineColor)
-        Spacer(Modifier.height(16.dp))
-
-        Text(
-            "Debug Manual Actions",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextPrimary
-        )
-        Spacer(Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Button(
-                onClick = onForceSimCheck,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = TextPrimary
-                ),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Force SIM Check", fontSize = 12.sp)
-            }
-
-            Button(
-                onClick = onForceWrongPin,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = WarnAmber.copy(alpha = 0.2f),
-                    contentColor = WarnAmber
-                ),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Force Wrong PIN", fontSize = 12.sp)
-            }
-        }
-    }
-}
 
 @Composable
 private fun AboutSection(
@@ -1141,59 +957,6 @@ private fun LogoutDialog(
     )
 }
 
-@Composable
-private fun WipeDataDialog(
-    show: Boolean,
-    onDismiss: () -> Unit,
-    onConfirmWipe: (String, (String) -> Unit) -> Unit
-) {
-    if (!show) return
-    var wipeDeleteInput by remember { mutableStateOf("") }
-    var wipeError by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text("Wipe App Data", fontWeight = FontWeight.Bold, color = TextPrimary)
-        },
-        text = {
-            Column {
-                Text("This will permanently delete all local app data, logs, and settings. Type DELETE to confirm:", fontSize = 12.sp, color = TextMuted)
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = wipeDeleteInput,
-                    onValueChange = { wipeDeleteInput = it },
-                    label = { Text("Type DELETE") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = GuardTeal,
-                        unfocusedBorderColor = LineColor
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (wipeError != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(wipeError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onConfirmWipe(wipeDeleteInput) { err -> wipeError = err }
-                }
-            ) {
-                Text("Wipe Data", color = AlertRed, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = TextMuted)
-            }
-        },
-        containerColor = PanelDark
-    )
-}
 
 @Composable
 private fun SettingsSectionHeader(title: String) {
