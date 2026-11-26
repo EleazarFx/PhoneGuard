@@ -79,4 +79,52 @@ class EmailService(config: ApplicationConfig) {
             Transport.send(message)
         }
     }
+
+    suspend fun sendSecurityAlert(
+        to: String,
+        deviceName: String,
+        eventType: String,
+        timestamp: Long,
+        lat: Double? = null,
+        lng: Double? = null
+    ) {
+        withContext(Dispatchers.IO) {
+            val eventTitle = when (eventType) {
+                "sim_change" -> "Unauthorized SIM Card Inserted"
+                "snatch" -> "Motion / Snatch Theft Detected"
+                "wrong_pin" -> "Failed PIN Entry Attempt"
+                else -> "Security Alert ($eventType)"
+            }
+
+            val dateStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(timestamp))
+            val locationStr = if (lat != null && lng != null) "https://maps.google.com/?q=$lat,$lng" else "Location unavailable"
+
+            val message = MimeMessage(session).apply {
+                setFrom(InternetAddress(smtpUser, fromName))
+                setRecipients(Message.RecipientType.TO, InternetAddress.parse(to))
+                subject = "[PhoneGuard Alert] $eventTitle on $deviceName"
+                setText("""
+                    Hello,
+
+                    PhoneGuard detected a critical security event on your registered device:
+
+                    Device: $deviceName
+                    Event Type: $eventTitle ($eventType)
+                    Time: $dateStr
+                    Location: $locationStr
+
+                    If this was not you, please log in to your PhoneGuard account or track your device immediately.
+
+                    Stay safe,
+                    PhoneGuard Security Team
+                """.trimIndent(), "utf-8")
+            }
+            try {
+                Transport.send(message)
+                println("[BACKEND EMAIL SENT] Successfully sent silent security email alert to $to for event '$eventType'")
+            } catch (e: Exception) {
+                println("[BACKEND EMAIL ERROR] Failed to send email to $to: ${e.message}")
+            }
+        }
+    }
 }

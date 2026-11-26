@@ -130,4 +130,20 @@ class AuthApi {
             ApiResult.Failure(e.message ?: "Network error")
         }
     }
+
+    suspend fun refreshToken(refreshToken: String): ApiResult<LoginResponse> {
+        return try {
+            val response: HttpResponse = client.post("${ApiClient.BASE_URL}/auth/refresh") {
+                setBody(mw.phoneguard.app.data.models.RefreshTokenRequest(refreshToken = refreshToken))
+            }
+            if (response.status == HttpStatusCode.OK) {
+                ApiResult.Success(response.body<LoginResponse>())
+            } else {
+                val error = response.body<Map<String, String>>()
+                ApiResult.Failure(error["error"] ?: "Token refresh failed")
+            }
+        } catch (e: Exception) {
+            ApiResult.Failure(e.message ?: "Network error")
+        }
+    }
 }

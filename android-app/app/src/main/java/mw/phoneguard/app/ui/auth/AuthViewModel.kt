@@ -269,7 +269,9 @@ class AuthViewModel(private val application: Application) : AndroidViewModel(app
         val result = deviceApi.register(
             userAccessToken = userToken,
             deviceName = deviceName,
-            model = android.os.Build.MODEL
+            model = android.os.Build.MODEL,
+            imei1 = tokenStore.getImei1(),
+            imei2 = tokenStore.getImei2()
         )
         if (result is ApiResult.Success) {
             tokenStore.saveDeviceIdentity(result.value.deviceId, result.value.deviceToken)

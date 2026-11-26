@@ -652,7 +652,17 @@ class PhoneGuardService : Service() {
 
         val mapsLink = AdaptiveLocationManager.formatMapsUrl(location)
 
-        val alertMessage = "[PhoneGuard] ALERT: Unauthorized SIM inserted! Device: $deviceName. SIM: $opInfo. Time: $timeStr. Location: $mapsLink"
+        val imei1 = tokenStore.getImei1()
+        val imei2 = tokenStore.getImei2()
+        val imeiStr = when {
+            !imei1.isNullOrBlank() && !imei2.isNullOrBlank() -> "IMEI1:$imei1 IMEI2:$imei2"
+            !imei1.isNullOrBlank() -> "IMEI:$imei1"
+            !imei2.isNullOrBlank() -> "IMEI:$imei2"
+            else -> null
+        }
+        val imeiPart = if (imeiStr != null) " $imeiStr." else ""
+
+        val alertMessage = "[PhoneGuard] ALERT: Unauthorized SIM inserted! Device: $deviceName.$imeiPart SIM: $opInfo. Time: $timeStr. Location: $mapsLink"
 
         var smsSent = false
         for (attempt in 1..3) {
@@ -711,6 +721,7 @@ class PhoneGuardService : Service() {
                 )
                 event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
                 db.eventDao().upsert(event)
+                SyncManager(applicationContext).syncPendingEvents()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue $type event", e)
             }
@@ -753,6 +764,7 @@ class PhoneGuardService : Service() {
                 )
                 event = EvidenceCapturer(applicationContext).captureAndAttachEvidence(event)
                 db.eventDao().upsert(event)
+                SyncManager(applicationContext).syncPendingEvents()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to queue snatch event", e)
             }
@@ -812,7 +824,16 @@ class PhoneGuardService : Service() {
                                     val mapsUrl = AdaptiveLocationManager.formatMapsUrl(location)
                                     val deviceName = "${Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} ${Build.MODEL}"
                                     val batteryStr = event.battery?.let { "$it%" } ?: "Unknown"
-                                    val smsMessage = "[PhoneGuard] ALERT (${mode.name} Tracking)! Device: $deviceName. Battery: $batteryStr. Location: $mapsUrl"
+                                    val imei1 = tokenStore.getImei1()
+                                    val imei2 = tokenStore.getImei2()
+                                    val imeiStr = when {
+                                        !imei1.isNullOrBlank() && !imei2.isNullOrBlank() -> "IMEI1:$imei1 IMEI2:$imei2"
+                                        !imei1.isNullOrBlank() -> "IMEI:$imei1"
+                                        !imei2.isNullOrBlank() -> "IMEI:$imei2"
+                                        else -> null
+                                    }
+                                    val imeiPart = if (imeiStr != null) " $imeiStr." else ""
+                                    val smsMessage = "[PhoneGuard] ALERT (${mode.name} Tracking)! Device: $deviceName.$imeiPart Battery: $batteryStr. Location: $mapsUrl"
                                     Log.w(TAG, "Dispatching offline fallback SMS location alert to emergency contacts")
                                     SmsSender.sendAlertToTrustedContacts(applicationContext, smsMessage, bypassRateLimit = (mode == TrackingMode.THEFT))
                                 }

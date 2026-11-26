@@ -63,11 +63,29 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
                 return@launch
             }
 
-            val result = contactApi.listContacts(token)
+            var activeToken = token
+            var result = contactApi.listContacts(activeToken)
+
+            if (result.isFailure) {
+                val err = result.exceptionOrNull()?.message ?: ""
+                val isAuthError = err.contains("401") || err.contains("Unauthorized", ignoreCase = true) || err.contains("expired", ignoreCase = true)
+                if (isAuthError) {
+                    val rToken = tokenStore.getUserRefreshToken()
+                    if (rToken != null) {
+                        val refreshRes = mw.phoneguard.app.data.api.AuthApi().refreshToken(rToken)
+                        if (refreshRes is mw.phoneguard.app.data.api.ApiResult.Success) {
+                            tokenStore.saveUserTokens(refreshRes.value.accessToken, refreshRes.value.refreshToken)
+                            activeToken = refreshRes.value.accessToken
+                            result = contactApi.listContacts(activeToken)
+                        }
+                    }
+                }
+            }
+
             if (result.isSuccess) {
                 val dtos = result.getOrDefault(emptyList())
                 val now = System.currentTimeMillis()
-                val entities = dtos.map { dto ->
+                val remoteEntities = dtos.map { dto ->
                     ContactEntity(
                         id = dto.id,
                         name = dto.name,
@@ -77,24 +95,61 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
                         lastSyncedTimestamp = now
                     )
                 }
-                contactDao.deleteAll()
-                contactDao.insertAll(entities)
-                tokenStore.saveTrustedContacts(entities.map { it.name to it.phone })
+
+                if (remoteEntities.isNotEmpty()) {
+                    contactDao.insertAll(remoteEntities)
+                    val remoteIds = remoteEntities.map { it.id }
+                    contactDao.deleteSyncedNotIn(remoteIds)
+                } else {
+                    contactDao.deleteSyncedAll()
+                }
+
+                val updatedEntities = contactDao.getAll()
+                tokenStore.saveTrustedContacts(updatedEntities.map { it.name to it.phone })
+                val lastSync = contactDao.getLastSyncedTime() ?: now
                 _uiState.value = _uiState.value.copy(
+                    contacts = updatedEntities,
                     isLoading = false,
                     isOffline = false,
-                    lastSyncedText = formatTimestamp(now),
+                    lastSyncedText = formatTimestamp(lastSync),
                     errorMessage = null
                 )
             } else {
-                Log.w("ContactsViewModel", "Failed to sync contacts from backend, using cache: ${result.exceptionOrNull()?.message}")
-                loadLocalState(isOfflineMode = true, error = "Offline mode: Showing cached contacts")
+                val errorMsg = result.exceptionOrNull()?.message ?: ""
+                val isAuthError = errorMsg.contains("401") || errorMsg.contains("Unauthorized", ignoreCase = true) || errorMsg.contains("expired", ignoreCase = true)
+                val userFacingError = if (isAuthError) {
+                    "Session expired. Log in again to sync."
+                } else {
+                    "Offline mode: Showing cached contacts"
+                }
+                Log.w("ContactsViewModel", "Failed to sync contacts from backend, using cache: $errorMsg")
+                loadLocalState(isOfflineMode = true, error = userFacingError)
             }
         }
     }
 
     private suspend fun loadLocalState(isOfflineMode: Boolean, error: String? = null) {
-        val entities = contactDao.getAll()
+        var entities = contactDao.getAll()
+
+        // Fallback restoration: if Room DB is empty but TokenStore has cached trusted contacts, restore them into Room
+        if (entities.isEmpty()) {
+            val cachedContacts = tokenStore.getTrustedContacts()
+            if (cachedContacts.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                val restored = cachedContacts.map { (name, phone) ->
+                    ContactEntity(
+                        id = java.util.UUID.randomUUID().toString(),
+                        name = name,
+                        phone = phone,
+                        createdAt = now.toString(),
+                        lastSyncedTimestamp = 0L
+                    )
+                }
+                contactDao.insertAll(restored)
+                entities = contactDao.getAll()
+            }
+        }
+
         val hasUnsynced = entities.any { it.lastSyncedTimestamp == 0L }
         val lastSync = contactDao.getLastSyncedTime() ?: 0L
         val syncText = when {
@@ -113,7 +168,9 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun addContact(name: String, phone: String) {
-        if (name.isBlank() || phone.isBlank()) {
+        val trimmedName = name.trim()
+        val trimmedPhone = phone.trim()
+        if (trimmedName.isBlank() || trimmedPhone.isBlank()) {
             _uiState.value = _uiState.value.copy(errorMessage = "Name and phone cannot be blank")
             return
         }
@@ -123,22 +180,35 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
         }
 
         viewModelScope.launch {
+            val tempId = java.util.UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
             val token = tokenStore.getUserAccessToken()
+
             if (token != null) {
-                val result = contactApi.createContact(token, name.trim(), phone.trim())
+                val result = contactApi.createContact(token, trimmedName, trimmedPhone)
                 if (result.isSuccess) {
+                    val dto = result.getOrNull()
+                    val syncedEntity = ContactEntity(
+                        id = dto?.id ?: tempId,
+                        name = dto?.name ?: trimmedName,
+                        phone = dto?.phone ?: trimmedPhone,
+                        email = dto?.email,
+                        createdAt = dto?.createdAt ?: now.toString(),
+                        lastSyncedTimestamp = now
+                    )
+                    contactDao.insert(syncedEntity)
+                    tokenStore.saveTrustedContacts(contactDao.getAll().map { it.name to it.phone })
                     refresh()
                     return@launch
                 }
             }
 
             // If token is null or creation API failed, save locally with lastSyncedTimestamp = 0L (pending sync)
-            val newId = java.util.UUID.randomUUID().toString()
             val entity = ContactEntity(
-                id = newId,
-                name = name.trim(),
-                phone = phone.trim(),
-                createdAt = System.currentTimeMillis().toString(),
+                id = tempId,
+                name = trimmedName,
+                phone = trimmedPhone,
+                createdAt = now.toString(),
                 lastSyncedTimestamp = 0L
             )
             contactDao.insert(entity)

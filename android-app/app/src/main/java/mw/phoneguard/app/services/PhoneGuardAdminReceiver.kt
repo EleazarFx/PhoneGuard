@@ -54,7 +54,16 @@ class PhoneGuardAdminReceiver : DeviceAdminReceiver() {
         // 1. Send SMS to trusted contacts immediately (bypass rate limit for critical tamper event)
         try {
             val timeStr = android.text.format.DateFormat.format("yyyy-MM-dd HH:mm:ss", System.currentTimeMillis()).toString()
-            val smsMessage = "[PhoneGuard] Tamper attempt at $timeStr (Deactivation count: $tamperCount)"
+            val imei1 = tokenStore.getImei1()
+            val imei2 = tokenStore.getImei2()
+            val imeiStr = when {
+                !imei1.isNullOrBlank() && !imei2.isNullOrBlank() -> "IMEI1:$imei1 IMEI2:$imei2"
+                !imei1.isNullOrBlank() -> "IMEI:$imei1"
+                !imei2.isNullOrBlank() -> "IMEI:$imei2"
+                else -> null
+            }
+            val imeiPart = if (imeiStr != null) " ($imeiStr)" else ""
+            val smsMessage = "[PhoneGuard] Tamper attempt at $timeStr$imeiPart (Deactivation count: $tamperCount)"
             SmsSender.sendAlertToTrustedContacts(appContext, smsMessage, bypassRateLimit = true)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send emergency tamper SMS", e)
@@ -233,6 +242,7 @@ class PhoneGuardAdminReceiver : DeviceAdminReceiver() {
             event = EvidenceCapturer(context.applicationContext).captureAndAttachEvidence(event)
             db.eventDao().upsert(event)
             Log.i(TAG, "$type event queued with evidence: ${event.id}")
+            SyncManager(context.applicationContext).syncPendingEvents()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to write $type event", e)
         }

@@ -33,6 +33,8 @@ data class SettingsUiState(
     val scheduledEndHour: Int = 6,
     val scheduledEndMinute: Int = 0,
     val isAdminActive: Boolean = false,
+    val imei1: String = "",
+    val imei2: String = "",
     val imei: String = "",
     val crashReportConsent: Boolean = false,
     val logs: List<String> = emptyList()
@@ -58,7 +60,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             scheduledEndHour = tokenStore.getScheduledEndHour(),
             scheduledEndMinute = tokenStore.getScheduledEndMinute(),
             isAdminActive = checkAdminActive(),
-            imei = tokenStore.getImei() ?: "",
+            imei1 = tokenStore.getImei1() ?: "",
+            imei2 = tokenStore.getImei2() ?: "",
+            imei = tokenStore.getImei1() ?: "",
             crashReportConsent = tokenStore.getCrashReportConsent(),
             logs = ServiceLogger.getLogs()
         )
@@ -135,9 +139,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun saveImeis(imei1: String, imei2: String) {
+        tokenStore.saveImeis(imei1, imei2)
+        _uiState.value = _uiState.value.copy(
+            imei1 = imei1,
+            imei2 = imei2,
+            imei = imei1
+        )
+    }
+
     fun saveImei(imei: String) {
-        tokenStore.saveImei(imei)
-        _uiState.value = _uiState.value.copy(imei = imei)
+        saveImeis(imei, _uiState.value.imei2)
     }
 
     fun wipeAppData(onResult: (Boolean, String) -> Unit) {
@@ -247,7 +259,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             scheduledEndHour = tokenStore.getScheduledEndHour(),
             scheduledEndMinute = tokenStore.getScheduledEndMinute(),
             isAdminActive = checkAdminActive(),
-            imei = tokenStore.getImei() ?: "",
+            imei1 = tokenStore.getImei1() ?: "",
+            imei2 = tokenStore.getImei2() ?: "",
+            imei = tokenStore.getImei1() ?: "",
             logs = ServiceLogger.getLogs()
         )
     }

@@ -10,6 +10,7 @@ import mw.phoneguard.app.data.api.DeviceApi
 import mw.phoneguard.app.data.local.ContactEntity
 import mw.phoneguard.app.data.local.PhoneGuardDatabase
 import mw.phoneguard.app.data.storage.TokenStore
+import mw.phoneguard.app.services.ServiceLogger
 
 class SyncManager(context: Context) {
 
@@ -32,20 +33,47 @@ class SyncManager(context: Context) {
      * POSTs them to the backend, and marks them synced if successful.
      */
     suspend fun syncPendingContacts() = withContext(Dispatchers.IO) {
-        val userToken = tokenStore.getUserAccessToken() ?: run {
+        var userToken = tokenStore.getUserAccessToken() ?: run {
             Log.w(TAG, "No user access token. Cannot sync contacts.")
             return@withContext
         }
 
         val unsynced = db.contactDao().getUnsynced()
         if (unsynced.isEmpty()) {
+            val allContacts = db.contactDao().getAll()
+            tokenStore.saveTrustedContacts(allContacts.map { it.name to it.phone })
             return@withContext
         }
 
         Log.d(TAG, "Attempting to sync ${unsynced.size} contacts...")
 
+        val authApi = mw.phoneguard.app.data.api.AuthApi()
+
         for (contact in unsynced) {
-            val result = contactApi.createContact(userToken, contact.name, contact.phone, contact.email)
+            var result = contactApi.createContact(userToken, contact.name, contact.phone, contact.email)
+
+            if (result.isFailure) {
+                val errorMsg = result.exceptionOrNull()?.message ?: ""
+                val isAuthError = errorMsg.contains("401") || errorMsg.contains("token", ignoreCase = true) || errorMsg.contains("Unauthorized", ignoreCase = true)
+                if (isAuthError) {
+                    val refreshToken = tokenStore.getUserRefreshToken()
+                    if (refreshToken != null) {
+                        Log.i(TAG, "User access token expired. Attempting token refresh...")
+                        val refreshResult = authApi.refreshToken(refreshToken)
+                        if (refreshResult is mw.phoneguard.app.data.api.ApiResult.Success) {
+                            val newAccess = refreshResult.value.accessToken
+                            val newRefresh = refreshResult.value.refreshToken
+                            tokenStore.saveUserTokens(newAccess, newRefresh)
+                            userToken = newAccess
+                            Log.i(TAG, "Token refresh successful. Retrying contact sync for ${contact.name}...")
+                            result = contactApi.createContact(userToken, contact.name, contact.phone, contact.email)
+                        } else {
+                            Log.w(TAG, "Token refresh failed: ${(refreshResult as? mw.phoneguard.app.data.api.ApiResult.Failure)?.message}")
+                        }
+                    }
+                }
+            }
+
             if (result.isSuccess) {
                 val dto = result.getOrNull()
                 val now = System.currentTimeMillis()
@@ -70,6 +98,9 @@ class SyncManager(context: Context) {
                 break
             }
         }
+
+        val allContacts = db.contactDao().getAll()
+        tokenStore.saveTrustedContacts(allContacts.map { it.name to it.phone })
     }
 
     /**
@@ -104,13 +135,22 @@ class SyncManager(context: Context) {
 
         Log.d(TAG, "Attempting to sync ${unsynced.size} events...")
 
+        val targetAlertTypes = setOf("sim_change", "snatch", "wrong_pin")
+        val isSilentEmailEnabled = tokenStore.isSilenceEmailEnabled()
+
         for (event in unsynced) {
             val eventToSync = if (event.deviceId != currentDeviceId) event.copy(deviceId = currentDeviceId) else event
-            when (val result = deviceApi.postEvent(currentDeviceToken, currentDeviceId, eventToSync)) {
+            val shouldSendSilentEmail = isSilentEmailEnabled && eventToSync.type in targetAlertTypes
+
+            if (shouldSendSilentEmail) {
+                ServiceLogger.log(TAG, "Silent email alert requested for event: ${eventToSync.type}")
+            }
+
+            when (val result = deviceApi.postEvent(currentDeviceToken, currentDeviceId, eventToSync, silentEmailAlert = if (shouldSendSilentEmail) true else null)) {
                 is ApiResult.Success -> {
                     val now = System.currentTimeMillis()
                     db.eventDao().markSynced(eventToSync.id, now)
-                    Log.d(TAG, "✅ Synced event ${eventToSync.id} (${eventToSync.type})")
+                    Log.d(TAG, "✅ Synced event ${eventToSync.id} (${eventToSync.type}) [silentEmail=$shouldSendSilentEmail]")
                 }
                 is ApiResult.Failure -> {
                     Log.e(TAG, "❌ Failed to sync event ${eventToSync.id}: ${result.message}")
@@ -122,11 +162,11 @@ class SyncManager(context: Context) {
                             currentDeviceId = reReg.first
                             currentDeviceToken = reReg.second
                             val retryEvent = eventToSync.copy(deviceId = currentDeviceId)
-                            val retryResult = deviceApi.postEvent(currentDeviceToken, currentDeviceId, retryEvent)
+                            val retryResult = deviceApi.postEvent(currentDeviceToken, currentDeviceId, retryEvent, silentEmailAlert = if (shouldSendSilentEmail) true else null)
                             if (retryResult is ApiResult.Success) {
                                 val now = System.currentTimeMillis()
                                 db.eventDao().markSynced(retryEvent.id, now)
-                                Log.d(TAG, "✅ Synced event ${retryEvent.id} (${retryEvent.type}) after re-registration")
+                                Log.d(TAG, "✅ Synced event ${retryEvent.id} (${retryEvent.type}) after re-registration [silentEmail=$shouldSendSilentEmail]")
                                 continue
                             }
                         }
@@ -144,7 +184,9 @@ class SyncManager(context: Context) {
         val regResult = deviceApi.register(
             userAccessToken = userToken,
             deviceName = deviceName,
-            model = android.os.Build.MODEL
+            model = android.os.Build.MODEL,
+            imei1 = tokenStore.getImei1(),
+            imei2 = tokenStore.getImei2()
         )
         if (regResult is ApiResult.Success) {
             val newId = regResult.value.deviceId

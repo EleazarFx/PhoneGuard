@@ -174,7 +174,8 @@ fun SettingsScreen(
                 SecurityAdminSection(
                     context = context,
                     isAdminActive = state.isAdminActive,
-                    imei = state.imei,
+                    imei1 = state.imei1,
+                    imei2 = state.imei2,
                     onDeactivateAdmin = { showDeactivateAdminDialog = true },
                     onEditImei = { showImeiDialog = true },
                     onWipeData = { showWipeDataDialog = true }
@@ -243,12 +244,13 @@ fun SettingsScreen(
 
     ImeiDialog(
         show = showImeiDialog,
-        currentImei = state.imei,
+        currentImei1 = state.imei1,
+        currentImei2 = state.imei2,
         onDismiss = { showImeiDialog = false },
-        onSave = { newImei ->
+        onSave = { imei1, imei2 ->
             showImeiDialog = false
-            viewModel.saveImei(newImei)
-            Toast.makeText(context, "IMEI saved", Toast.LENGTH_SHORT).show()
+            viewModel.saveImeis(imei1, imei2)
+            Toast.makeText(context, "IMEIs saved", Toast.LENGTH_SHORT).show()
         }
     )
 
@@ -636,7 +638,8 @@ private fun NotificationsSection(
 private fun SecurityAdminSection(
     context: Context,
     isAdminActive: Boolean,
-    imei: String,
+    imei1: String,
+    imei2: String,
     onDeactivateAdmin: () -> Unit,
     onEditImei: () -> Unit,
     onWipeData: () -> Unit
@@ -705,6 +708,16 @@ private fun SecurityAdminSection(
         Spacer(Modifier.height(14.dp))
 
         // IMEI row
+        val hasImei = imei1.isNotBlank() || imei2.isNotBlank()
+        val imeiSubtitle = buildString {
+            if (imei1.isNotBlank()) append("IMEI 1: $imei1")
+            if (imei2.isNotBlank()) {
+                if (isNotEmpty()) append(" | ")
+                append("IMEI 2: $imei2")
+            }
+            if (isEmpty()) append("Not Set — Tap to configure IMEI 1 & 2")
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -712,13 +725,13 @@ private fun SecurityAdminSection(
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(
-                    "Device IMEI",
+                    "Device IMEI (Dual SIM)",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = TextPrimary
                 )
                 Text(
-                    text = if (imei.isNotBlank()) "IMEI: $imei" else "Not Set — Tap to configure IMEI",
+                    text = imeiSubtitle,
                     fontSize = 12.sp,
                     color = TextMuted
                 )
@@ -728,7 +741,7 @@ private fun SecurityAdminSection(
                 onClick = onEditImei,
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text(if (imei.isNotBlank()) "Edit IMEI" else "Set IMEI", fontSize = 12.sp)
+                Text(if (hasImei) "Edit IMEIs" else "Set IMEIs", fontSize = 12.sp)
             }
         }
 
@@ -1021,28 +1034,56 @@ private fun DeactivateAdminDialog(
 @Composable
 private fun ImeiDialog(
     show: Boolean,
-    currentImei: String,
+    currentImei1: String,
+    currentImei2: String,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit
+    onSave: (String, String) -> Unit
 ) {
     if (!show) return
-    var imeiInput by remember(currentImei) { mutableStateOf(currentImei) }
+    var imei1Input by remember(currentImei1) { mutableStateOf(currentImei1) }
+    var imei2Input by remember(currentImei2) { mutableStateOf(currentImei2) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Set Device IMEI", fontWeight = FontWeight.Bold, color = TextPrimary)
+            Text("Device IMEIs (Hardware ID)", fontWeight = FontWeight.Bold, color = TextPrimary)
         },
         text = {
             Column {
-                Text("Enter 15-digit IMEI for hardware identification:", fontSize = 12.sp, color = TextMuted)
-                Spacer(Modifier.height(4.dp))
-                Text("Tip: Dial *#06# on your phone dialer or check Settings > About Phone to find your IMEI.", fontSize = 11.sp, color = GuardTeal)
+                Text(
+                    "Store your 15-digit hardware IMEIs for police report & carrier EIR blacklisting in case of theft:",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    "Tip: Open your Phone app dialer and dial *#06# (or check Settings > About Phone) to view your 15-digit IMEIs.",
+                    fontSize = 11.sp,
+                    color = GuardTeal
+                )
+
                 Spacer(Modifier.height(12.dp))
+
                 OutlinedTextField(
-                    value = imeiInput,
-                    onValueChange = { imeiInput = it },
-                    label = { Text("IMEI") },
+                    value = imei1Input,
+                    onValueChange = { imei1Input = it },
+                    label = { Text("IMEI 1 (Primary SIM)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = GuardTeal,
+                        unfocusedBorderColor = LineColor
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = imei2Input,
+                    onValueChange = { imei2Input = it },
+                    label = { Text("IMEI 2 (Secondary SIM / eSIM)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -1054,7 +1095,7 @@ private fun ImeiDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(imeiInput.trim()) }) {
+            TextButton(onClick = { onSave(imei1Input.trim(), imei2Input.trim()) }) {
                 Text("Save", color = GuardTeal, fontWeight = FontWeight.Bold)
             }
         },

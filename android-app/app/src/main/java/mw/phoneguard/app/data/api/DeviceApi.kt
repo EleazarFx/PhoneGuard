@@ -51,7 +51,8 @@ class DeviceApi(private val context: android.content.Context? = null) {
     suspend fun postEvent(
         deviceToken: String,
         deviceId: String,
-        event: mw.phoneguard.app.data.local.EventEntity
+        event: mw.phoneguard.app.data.local.EventEntity,
+        silentEmailAlert: Boolean? = null
     ): ApiResult<Unit> {
         return try {
             val response: HttpResponse = client.post("${ApiClient.BASE_URL}/device/$deviceId/events") {
@@ -67,7 +68,8 @@ class DeviceApi(private val context: android.content.Context? = null) {
                         captureStatus = event.captureStatus,
                         photoSha256 = event.photoSha256,
                         videoSha256 = event.videoSha256,
-                        clientSeq = event.clientSeq
+                        clientSeq = event.clientSeq,
+                        silentEmailAlert = silentEmailAlert
                     )
                 )
             }

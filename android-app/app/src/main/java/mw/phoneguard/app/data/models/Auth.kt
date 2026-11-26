@@ -62,3 +62,8 @@ data class ResetPasswordRequest(
     val otp: String,
     val newPassword: String
 )
+
+@Serializable
+data class RefreshTokenRequest(
+    val refreshToken: String
+)

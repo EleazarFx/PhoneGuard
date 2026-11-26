@@ -20,6 +20,9 @@ import mw.phoneguard.models.HeartbeatRequest
 import mw.phoneguard.models.PostEventRequest
 import org.jetbrains.exposed.sql.update
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import mw.phoneguard.db.Commands
 import mw.phoneguard.models.DeviceCommand
 
@@ -109,7 +112,7 @@ class DeviceService {
     }
 
 
-    fun postEvent(deviceId: String, req: PostEventRequest): EventSummary? {
+    fun postEvent(deviceId: String, req: PostEventRequest, emailService: EmailService? = null): EventSummary? {
         return transaction {
             val deviceUuid = try {
                 UUID.fromString(deviceId)
@@ -145,6 +148,20 @@ class DeviceService {
                 it[createdAt] = now
             }
 
+            var ownerEmail: String? = null
+            var deviceName = "Android Device"
+            try {
+                val deviceRow = Devices.selectAll().where { Devices.id eq deviceUuid }.singleOrNull()
+                if (deviceRow != null) {
+                    deviceName = deviceRow[Devices.deviceName]
+                    val ownerUserId = deviceRow[Devices.userId].value
+                    val userRow = Users.selectAll().where { Users.id eq ownerUserId }.singleOrNull()
+                    ownerEmail = userRow?.get(Users.email)
+                }
+            } catch (e: Exception) {
+                println("[BACKEND DEVICE/USER LOOKUP ERROR] ${e.message}")
+            }
+
             if (req.type == "sim_change") {
                 try {
                     val deviceRow = Devices.selectAll().where { Devices.id eq deviceUuid }.singleOrNull()
@@ -162,6 +179,28 @@ class DeviceService {
                     }
                 } catch (e: Exception) {
                     println("[BACKEND SMS ALERT ERROR] Failed to send SMS alert to trusted contacts: ${e.message}")
+                }
+            }
+
+            if (emailService != null && ownerEmail != null) {
+                val shouldSendEmail = req.silentEmailAlert == true || (req.silentEmailAlert == null && req.type in setOf("sim_change", "snatch", "wrong_pin"))
+                if (shouldSendEmail) {
+                    val emailTo = ownerEmail
+                    val dName = deviceName
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            emailService.sendSecurityAlert(
+                                to = emailTo,
+                                deviceName = dName,
+                                eventType = req.type,
+                                timestamp = req.timestamp,
+                                lat = req.lat,
+                                lng = req.lng
+                            )
+                        } catch (e: Exception) {
+                            println("[BACKEND EMAIL ALERT ERROR] Failed sending alert email to $emailTo: ${e.message}")
+                        }
+                    }
                 }
             }
 

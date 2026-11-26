@@ -207,8 +207,16 @@ class TokenStore private constructor(context: Context) {
     fun isSilenceEmailEnabled(): Boolean = prefs.getBoolean(KEY_SILENCE_EMAIL, false)
     fun saveSilenceEmailEnabled(enabled: Boolean) = prefs.edit().putBoolean(KEY_SILENCE_EMAIL, enabled).apply()
 
-    fun getImei(): String? = prefs.getString(KEY_DEVICE_IMEI, null)
-    fun saveImei(imei: String) = prefs.edit().putString(KEY_DEVICE_IMEI, imei).apply()
+    fun getImei1(): String? = prefs.getString(KEY_DEVICE_IMEI_1, null) ?: prefs.getString(KEY_DEVICE_IMEI, null)
+    fun getImei2(): String? = prefs.getString(KEY_DEVICE_IMEI_2, null)
+    fun saveImeis(imei1: String, imei2: String) {
+        prefs.edit()
+            .putString(KEY_DEVICE_IMEI_1, imei1)
+            .putString(KEY_DEVICE_IMEI_2, imei2)
+            .apply()
+    }
+    fun getImei(): String? = getImei1()
+    fun saveImei(imei: String) = prefs.edit().putString(KEY_DEVICE_IMEI_1, imei).putString(KEY_DEVICE_IMEI, imei).apply()
 
     fun getAppPin(): String? = prefs.getString(KEY_APP_PIN, null)
     fun saveAppPin(pin: String) = prefs.edit().putString(KEY_APP_PIN, pin).apply()
@@ -411,6 +419,8 @@ class TokenStore private constructor(context: Context) {
         private const val KEY_ESCALATION_SMS = "opt_in_escalation_sms"
         private const val KEY_SILENCE_EMAIL = "opt_in_silence_email"
         private const val KEY_DEVICE_IMEI = "device_imei"
+        private const val KEY_DEVICE_IMEI_1 = "device_imei_1"
+        private const val KEY_DEVICE_IMEI_2 = "device_imei_2"
         private const val KEY_APP_PIN = "app_local_pin"
         private const val KEY_OWNER_SMS_CODE = "owner_sms_code"
         private const val KEY_PIN_FAILED_ATTEMPTS = "pin_failed_attempts"

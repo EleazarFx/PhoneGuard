@@ -13,5 +13,6 @@ data class PostEventRequest(
     val captureStatus: String? = null,
     val photoSha256: String? = null,
     val videoSha256: String? = null,
-    val clientSeq: Long? = null
+    val clientSeq: Long? = null,
+    val silentEmailAlert: Boolean? = null
 )

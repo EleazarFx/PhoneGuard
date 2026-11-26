@@ -26,6 +26,12 @@ interface ContactDao {
     @Query("DELETE FROM trusted_contacts")
     suspend fun deleteAll()
 
+    @Query("DELETE FROM trusted_contacts WHERE lastSyncedTimestamp > 0")
+    suspend fun deleteSyncedAll()
+
+    @Query("DELETE FROM trusted_contacts WHERE lastSyncedTimestamp > 0 AND id NOT IN (:ids)")
+    suspend fun deleteSyncedNotIn(ids: List<String>)
+
     @Query("SELECT COUNT(*) FROM trusted_contacts")
     suspend fun getCount(): Int
 
